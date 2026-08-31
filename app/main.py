@@ -24,13 +24,21 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
 
 
+def require_admin_token(x_admin_token: str | None) -> None:
+    if not settings.admin_sync_token:
+        raise HTTPException(status_code=503, detail="ADMIN_SYNC_TOKEN is not configured")
+    if x_admin_token != settings.admin_sync_token:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": settings.app_name, "environment": settings.app_env}
 
 
-@app.get("/api/football/leagues")
-async def football_leagues() -> dict:
+@app.get("/api/admin/football/leagues")
+async def football_leagues(x_admin_token: str | None = Header(default=None)) -> dict:
+    require_admin_token(x_admin_token)
     try:
         return await APIFootballProvider().get_leagues()
     except RuntimeError as exc:
@@ -45,10 +53,7 @@ async def sync_champions_league_endpoint(
     x_admin_token: str | None = Header(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    if not settings.admin_sync_token:
-        raise HTTPException(status_code=503, detail="ADMIN_SYNC_TOKEN is not configured")
-    if x_admin_token != settings.admin_sync_token:
-        raise HTTPException(status_code=401, detail="Invalid admin token")
+    require_admin_token(x_admin_token)
 
     try:
         return await sync_champions_league(db, season)
