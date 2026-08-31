@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from app.providers.sstats import SStatsProvider
 SSTATS_PROVIDER = "sstats"
 CHAMPIONS_LEAGUE_ID = 2
 API_FOOTBALL_LOGO_SEASON = 2024
+MAX_API_FOOTBALL_SEARCHES = 2
 
 
 def _pick(data: dict, *names: str, default=None):
@@ -67,38 +69,6 @@ def _integrity_message(exc: IntegrityError, game_id) -> str:
     return "; ".join(parts)
 
 
-def _unwrap_data(payload: dict):
-    data = payload.get("data") or payload.get("response") or payload
-    if isinstance(data, list):
-        return data[0] if data else {}
-    return data if isinstance(data, dict) else {}
-
-
-def _find_logo(data: dict) -> str | None:
-    direct = _pick(
-        data,
-        "logo", "Logo",
-        "logoUrl", "LogoUrl",
-        "image", "Image",
-        "imageUrl", "ImageUrl",
-        "photo", "Photo",
-        "photoUrl", "PhotoUrl",
-    )
-    if isinstance(direct, str) and direct.startswith(("http://", "https://")):
-        return direct
-
-    for key, value in data.items():
-        key_lower = str(key).lower()
-        if isinstance(value, str) and value.startswith(("http://", "https://")):
-            if "logo" in key_lower or "image" in key_lower or "photo" in key_lower:
-                return value
-        if isinstance(value, dict):
-            nested = _find_logo(value)
-            if nested:
-                return nested
-    return None
-
-
 def _normalize_team_name(value: str) -> str:
     return " ".join(
         value.lower()
@@ -115,7 +85,6 @@ def _normalize_team_name(value: str) -> str:
 
 
 def _api_search_name(value: str) -> str:
-    """API-Football search accepts only letters, digits and spaces."""
     cleaned = "".join(char if (char.isalnum() or char.isspace()) else " " for char in value)
     return " ".join(cleaned.split())
 
@@ -161,7 +130,11 @@ def _error_key(exc: Exception) -> str:
     text = str(exc).strip().replace("\n", " ")
     if not text:
         return type(exc).__name__
-    return text[:180]
+    return text[:220]
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 429
 
 
 async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tournament:
@@ -303,11 +276,12 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
 
 
 async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> dict:
-    """Enrich SStats teams while minimizing API-Football quota usage.
+    """Enrich crests while protecting both providers from unnecessary calls.
 
-    SStats remains authoritative for team identity. Crest lookup first uses one
-    bulk API-Football catalogue request for UCL 2024 (available on the free
-    plan), then performs at most five individual searches for unmatched teams.
+    SStats /teams/{id} was tested and does not provide usable crests, so this
+    job does not call it per team anymore. API-Football is queried once for the
+    UCL 2024 team catalogue, then at most twice by name for unmatched clubs.
+    A 429 immediately stops further API-Football requests in this run.
     """
     teams = (
         await session.execute(
@@ -318,17 +292,15 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         )
     ).scalars().all()
 
-    sstats = SStatsProvider()
     api_football = APIFootballProvider()
     logos_updated = 0
-    logos_from_sstats = 0
-    logos_from_api_football = 0
     logos_from_bulk = 0
     logos_from_search = 0
     without_logo = 0
     failed = 0
     search_requests = 0
     error_reasons: dict[str, int] = {}
+    rate_limited = False
 
     bulk_catalog: dict[str, dict] = {}
     bulk_error = None
@@ -337,30 +309,10 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         bulk_catalog = _api_football_catalog(bulk_payload)
     except Exception as exc:
         bulk_error = _error_key(exc)
-        error_reasons[bulk_error] = error_reasons.get(bulk_error, 0) + 1
+        error_reasons["API-Football bulk: " + bulk_error] = 1
+        rate_limited = _is_rate_limited(exc)
 
     for team in teams:
-        logo = None
-        try:
-            payload = await sstats.get_team(team.provider_id)
-            data = _unwrap_data(payload)
-            name = _pick(data, "name", "Name", "teamName", "TeamName")
-            code = _pick(data, "code", "Code", "shortName", "ShortName")
-            logo = _find_logo(data)
-
-            if name:
-                team.name = str(name)
-            if code:
-                team.code = str(code)[:20]
-            if logo:
-                team.logo_url = logo
-                logos_updated += 1
-                logos_from_sstats += 1
-                continue
-        except Exception as exc:
-            key = "SStats: " + _error_key(exc)
-            error_reasons[key] = error_reasons.get(key, 0) + 1
-
         api_team = bulk_catalog.get(_normalize_team_name(team.name))
         if api_team:
             logo = api_team.get("logo")
@@ -370,11 +322,14 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
                 if code and not team.code:
                     team.code = str(code)[:20]
                 logos_updated += 1
-                logos_from_api_football += 1
                 logos_from_bulk += 1
                 continue
 
-        if search_requests >= 5:
+        if rate_limited or not bulk_catalog:
+            without_logo += 1
+            continue
+
+        if search_requests >= MAX_API_FOOTBALL_SEARCHES:
             without_logo += 1
             continue
 
@@ -394,7 +349,6 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
                 if code and not team.code:
                     team.code = str(code)[:20]
                 logos_updated += 1
-                logos_from_api_football += 1
                 logos_from_search += 1
             else:
                 without_logo += 1
@@ -402,6 +356,8 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
             failed += 1
             key = "API-Football search: " + _error_key(exc)
             error_reasons[key] = error_reasons.get(key, 0) + 1
+            if _is_rate_limited(exc):
+                rate_limited = True
 
     await session.commit()
     remaining = await session.scalar(
@@ -414,8 +370,8 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         "provider": SSTATS_PROVIDER,
         "requested": len(teams),
         "logos_updated": logos_updated,
-        "logos_from_sstats": logos_from_sstats,
-        "logos_from_api_football": logos_from_api_football,
+        "logos_from_sstats": 0,
+        "logos_from_api_football": logos_updated,
         "logos_from_bulk": logos_from_bulk,
         "logos_from_search": logos_from_search,
         "api_football_bulk_teams": len(bulk_catalog),
@@ -424,6 +380,7 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         "without_logo": without_logo,
         "failed": failed,
         "remaining_without_logo": remaining,
+        "rate_limited": rate_limited,
         "error_reasons": error_reasons,
         "bulk_error": bulk_error,
     }
