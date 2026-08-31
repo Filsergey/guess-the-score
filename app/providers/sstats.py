@@ -67,3 +67,9 @@ class SStatsProvider:
 
     async def get_game(self, game_id: int) -> dict:
         return await self._get(f"games/{game_id}")
+
+    async def get_teams(self, **params) -> dict:
+        return await self._get("teams/list", params or None)
+
+    async def get_team(self, team_id: int) -> dict:
+        return await self._get(f"teams/{team_id}")
