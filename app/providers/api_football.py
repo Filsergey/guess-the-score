@@ -41,3 +41,11 @@ class APIFootballProvider:
 
     async def get_live_fixtures(self) -> dict:
         return await self._get("fixtures", {"live": "all"})
+
+    async def search_teams(self, name: str) -> dict:
+        """Search team metadata without a season restriction.
+
+        We use this only as a metadata fallback (logo/code) when the primary
+        SStats team endpoint has no crest URL. Match ownership remains SStats.
+        """
+        return await self._get("teams", {"search": name})
