@@ -5,11 +5,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.auth import router as auth_router
 from app.competitions.champions_league import classify_ucl_round
 from app.config import get_settings
 from app.database import engine, get_db
 from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
+from app.predictions import router as predictions_router
 from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 from app.services.football_sync import sync_champions_league
@@ -26,7 +28,9 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="0.6.2", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.7.0", lifespan=lifespan)
+app.include_router(auth_router)
+app.include_router(predictions_router)
 
 
 def require_admin_token(x_admin_token: str | None) -> None:
