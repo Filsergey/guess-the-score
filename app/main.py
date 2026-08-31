@@ -9,6 +9,7 @@ from app.config import get_settings
 from app.database import engine, get_db
 from app.models import Base, Match, Team
 from app.providers.api_football import APIFootballProvider
+from app.providers.sstats import SStatsProvider
 from app.services.football_sync import sync_champions_league
 
 settings = get_settings()
@@ -21,7 +22,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 
 
 def require_admin_token(x_admin_token: str | None) -> None:
@@ -45,6 +46,32 @@ async def football_leagues(x_admin_token: str | None = Header(default=None)) -> 
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail="API-Football request failed") from exc
+
+
+@app.get("/api/admin/sstats/leagues")
+async def sstats_leagues(x_admin_token: str | None = Header(default=None)) -> dict:
+    require_admin_token(x_admin_token)
+    try:
+        return await SStatsProvider().get_leagues()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="SStats request failed") from exc
+
+
+@app.get("/api/admin/sstats/games")
+async def sstats_games(
+    league_id: int = Query(default=2, ge=1),
+    year: int = Query(..., ge=2020, le=2100),
+    x_admin_token: str | None = Header(default=None),
+) -> dict:
+    require_admin_token(x_admin_token)
+    try:
+        return await SStatsProvider().get_games(league_id, year)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="SStats request failed") from exc
 
 
 @app.post("/api/admin/sync/champions-league")
