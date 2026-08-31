@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Match, Team, Tournament
+from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 
 SSTATS_PROVIDER = "sstats"
@@ -30,13 +31,6 @@ def _parse_datetime(value) -> datetime:
 
 
 def _normalize_status(raw_status, kickoff_at: datetime, home_goals, away_goals) -> tuple[str, str | None]:
-    """Return provider-independent status without guessing SStats numeric codes.
-
-    SStats documents Status as an integer but its public docs do not expose the
-    code table in a machine-readable form. Until we add the live adapter, use
-    safe facts we do know: future fixtures are NS and past fixtures with a score
-    are FT. Preserve the raw provider status in status_long for diagnostics.
-    """
     now = datetime.now(timezone.utc)
     raw_text = None if raw_status is None else str(raw_status)
     status_long = f"SStats status {raw_text}" if raw_text is not None else None
@@ -102,6 +96,42 @@ def _find_logo(data: dict) -> str | None:
             if nested:
                 return nested
     return None
+
+
+def _normalize_team_name(value: str) -> str:
+    return " ".join(
+        value.lower()
+        .replace("fc", " ")
+        .replace("cf", " ")
+        .replace("fk", " ")
+        .replace("afc", " ")
+        .replace(".", " ")
+        .replace("-", " ")
+        .split()
+    )
+
+
+def _pick_api_football_team(payload: dict, expected_name: str) -> dict:
+    rows = payload.get("response") or []
+    if not isinstance(rows, list) or not rows:
+        return {}
+
+    expected = _normalize_team_name(expected_name)
+    for row in rows:
+        team = row.get("team") if isinstance(row, dict) else None
+        if not isinstance(team, dict):
+            continue
+        name = str(team.get("name") or "")
+        if _normalize_team_name(name) == expected:
+            return team
+
+    # API-Football search is already name-filtered. If there is exactly one
+    # result, accepting it is safer than dropping a crest because of FC/CF
+    # suffix differences.
+    if len(rows) == 1 and isinstance(rows[0], dict):
+        team = rows[0].get("team")
+        return team if isinstance(team, dict) else {}
+    return {}
 
 
 async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tournament:
@@ -243,7 +273,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
 
 
 async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> dict:
-    """Enrich SStats teams in small batches to stay below anonymous API limits."""
+    """Enrich SStats teams; API-Football supplies crests only as fallback."""
     teams = (
         await session.execute(
             select(Team)
@@ -253,14 +283,18 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         )
     ).scalars().all()
 
-    provider = SStatsProvider()
-    updated = 0
+    sstats = SStatsProvider()
+    api_football = APIFootballProvider()
+    logos_updated = 0
+    logos_from_sstats = 0
+    logos_from_api_football = 0
     without_logo = 0
     failed = 0
 
     for team in teams:
+        logo = None
         try:
-            payload = await provider.get_team(team.provider_id)
+            payload = await sstats.get_team(team.provider_id)
             data = _unwrap_data(payload)
             name = _pick(data, "name", "Name", "teamName", "TeamName")
             code = _pick(data, "code", "Code", "shortName", "ShortName")
@@ -272,23 +306,43 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
                 team.code = str(code)[:20]
             if logo:
                 team.logo_url = logo
-                updated += 1
+                logos_updated += 1
+                logos_from_sstats += 1
+                continue
+        except Exception:
+            # SStats team metadata is optional here; keep trying the fallback.
+            pass
+
+        try:
+            payload = await api_football.search_teams(team.name)
+            api_team = _pick_api_football_team(payload, team.name)
+            logo = api_team.get("logo") if api_team else None
+            code = api_team.get("code") if api_team else None
+            if isinstance(logo, str) and logo.startswith(("http://", "https://")):
+                team.logo_url = logo
+                if code and not team.code:
+                    team.code = str(code)[:20]
+                logos_updated += 1
+                logos_from_api_football += 1
             else:
                 without_logo += 1
         except Exception:
             failed += 1
 
     await session.commit()
+    remaining = await session.scalar(
+        select(func.count(Team.id)).where(
+            Team.provider == SSTATS_PROVIDER,
+            Team.logo_url.is_(None),
+        )
+    )
     return {
         "provider": SSTATS_PROVIDER,
         "requested": len(teams),
-        "logos_updated": updated,
+        "logos_updated": logos_updated,
+        "logos_from_sstats": logos_from_sstats,
+        "logos_from_api_football": logos_from_api_football,
         "without_logo": without_logo,
         "failed": failed,
-        "remaining_without_logo": await session.scalar(
-            select(__import__("sqlalchemy").func.count(Team.id)).where(
-                Team.provider == SSTATS_PROVIDER,
-                Team.logo_url.is_(None),
-            )
-        ),
+        "remaining_without_logo": remaining,
     }
