@@ -10,6 +10,7 @@ from app.providers.sstats import SStatsProvider
 
 SSTATS_PROVIDER = "sstats"
 CHAMPIONS_LEAGUE_ID = 2
+API_FOOTBALL_LOGO_SEASON = 2024
 
 
 def _pick(data: dict, *names: str, default=None):
@@ -107,6 +108,7 @@ def _normalize_team_name(value: str) -> str:
         .replace("afc", " ")
         .replace(".", " ")
         .replace("-", " ")
+        .replace("'", "")
         .split()
     )
 
@@ -125,13 +127,34 @@ def _pick_api_football_team(payload: dict, expected_name: str) -> dict:
         if _normalize_team_name(name) == expected:
             return team
 
-    # API-Football search is already name-filtered. If there is exactly one
-    # result, accepting it is safer than dropping a crest because of FC/CF
-    # suffix differences.
     if len(rows) == 1 and isinstance(rows[0], dict):
         team = rows[0].get("team")
         return team if isinstance(team, dict) else {}
     return {}
+
+
+def _api_football_catalog(payload: dict) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    rows = payload.get("response") or []
+    if not isinstance(rows, list):
+        return result
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        team = row.get("team")
+        if not isinstance(team, dict):
+            continue
+        name = str(team.get("name") or "").strip()
+        if name:
+            result[_normalize_team_name(name)] = team
+    return result
+
+
+def _error_key(exc: Exception) -> str:
+    text = str(exc).strip().replace("\n", " ")
+    if not text:
+        return type(exc).__name__
+    return text[:180]
 
 
 async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tournament:
@@ -273,7 +296,12 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
 
 
 async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> dict:
-    """Enrich SStats teams; API-Football supplies crests only as fallback."""
+    """Enrich SStats teams while minimizing API-Football quota usage.
+
+    SStats remains authoritative for team identity. Crest lookup first uses one
+    bulk API-Football catalogue request for UCL 2024 (available on the free
+    plan), then performs at most five individual searches for unmatched teams.
+    """
     teams = (
         await session.execute(
             select(Team)
@@ -288,8 +316,21 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
     logos_updated = 0
     logos_from_sstats = 0
     logos_from_api_football = 0
+    logos_from_bulk = 0
+    logos_from_search = 0
     without_logo = 0
     failed = 0
+    search_requests = 0
+    error_reasons: dict[str, int] = {}
+
+    bulk_catalog: dict[str, dict] = {}
+    bulk_error = None
+    try:
+        bulk_payload = await api_football.get_teams(CHAMPIONS_LEAGUE_ID, API_FOOTBALL_LOGO_SEASON)
+        bulk_catalog = _api_football_catalog(bulk_payload)
+    except Exception as exc:
+        bulk_error = _error_key(exc)
+        error_reasons[bulk_error] = error_reasons.get(bulk_error, 0) + 1
 
     for team in teams:
         logo = None
@@ -309,11 +350,29 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
                 logos_updated += 1
                 logos_from_sstats += 1
                 continue
-        except Exception:
-            # SStats team metadata is optional here; keep trying the fallback.
-            pass
+        except Exception as exc:
+            key = "SStats: " + _error_key(exc)
+            error_reasons[key] = error_reasons.get(key, 0) + 1
+
+        api_team = bulk_catalog.get(_normalize_team_name(team.name))
+        if api_team:
+            logo = api_team.get("logo")
+            code = api_team.get("code")
+            if isinstance(logo, str) and logo.startswith(("http://", "https://")):
+                team.logo_url = logo
+                if code and not team.code:
+                    team.code = str(code)[:20]
+                logos_updated += 1
+                logos_from_api_football += 1
+                logos_from_bulk += 1
+                continue
+
+        if search_requests >= 5:
+            without_logo += 1
+            continue
 
         try:
+            search_requests += 1
             payload = await api_football.search_teams(team.name)
             api_team = _pick_api_football_team(payload, team.name)
             logo = api_team.get("logo") if api_team else None
@@ -324,10 +383,13 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
                     team.code = str(code)[:20]
                 logos_updated += 1
                 logos_from_api_football += 1
+                logos_from_search += 1
             else:
                 without_logo += 1
-        except Exception:
+        except Exception as exc:
             failed += 1
+            key = "API-Football search: " + _error_key(exc)
+            error_reasons[key] = error_reasons.get(key, 0) + 1
 
     await session.commit()
     remaining = await session.scalar(
@@ -342,7 +404,14 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
         "logos_updated": logos_updated,
         "logos_from_sstats": logos_from_sstats,
         "logos_from_api_football": logos_from_api_football,
+        "logos_from_bulk": logos_from_bulk,
+        "logos_from_search": logos_from_search,
+        "api_football_bulk_teams": len(bulk_catalog),
+        "api_football_bulk_season": API_FOOTBALL_LOGO_SEASON,
+        "api_football_search_requests": search_requests,
         "without_logo": without_logo,
         "failed": failed,
         "remaining_without_logo": remaining,
+        "error_reasons": error_reasons,
+        "bulk_error": bulk_error,
     }
