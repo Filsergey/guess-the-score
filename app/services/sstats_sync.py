@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.competitions.champions_league import classify_ucl_round
 from app.models import Match, Team, Tournament
 from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
@@ -178,6 +179,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     created = 0
     updated = 0
     skipped = 0
+    classified_rounds = 0
     skip_reasons: dict[str, int] = {}
     current_game_id = None
 
@@ -218,17 +220,24 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
             )
             is_new = match is None
             kickoff_at = _parse_datetime(date_value)
+            season = int(_pick(item, "year", "Year", default=year))
             raw_status = _pick(item, "status", "Status")
             home_goals = _pick(item, "scoreHome", "ScoreHome", "scoreHomeFT", "ScoreHomeFT")
             away_goals = _pick(item, "scoreAway", "ScoreAway", "scoreAwayFT", "ScoreAwayFT")
             status_short, status_long = _normalize_status(raw_status, kickoff_at, home_goals, away_goals)
+
+            provider_round = _pick(item, "round", "Round", "roundName", "RoundName")
+            classified = classify_ucl_round(season, kickoff_at)
+            round_name = provider_round or (classified["round_label"] if classified else None)
+            if not provider_round and classified:
+                classified_rounds += 1
 
             if is_new:
                 match = Match(
                     provider=SSTATS_PROVIDER,
                     provider_id=int(game_id),
                     tournament_id=tournament.id,
-                    season=int(_pick(item, "year", "Year", default=year)),
+                    season=season,
                     kickoff_at=kickoff_at,
                     status_short=status_short,
                     home_team_id=home_team.id,
@@ -237,8 +246,8 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
                 session.add(match)
 
             match.tournament_id = tournament.id
-            match.season = int(_pick(item, "year", "Year", default=year))
-            match.round_name = _pick(item, "round", "Round", "roundName", "RoundName")
+            match.season = season
+            match.round_name = round_name
             match.kickoff_at = kickoff_at
             match.status_short = status_short
             match.status_long = status_long
@@ -270,6 +279,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
         "received": len(items),
         "created": created,
         "updated": updated,
+        "classified_rounds": classified_rounds,
         "skipped": skipped,
         "skip_reasons": skip_reasons,
     }
