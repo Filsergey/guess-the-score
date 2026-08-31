@@ -42,10 +42,14 @@ class APIFootballProvider:
     async def get_live_fixtures(self) -> dict:
         return await self._get("fixtures", {"live": "all"})
 
+    async def get_teams(self, league: int, season: int) -> dict:
+        """Fetch a whole competition's team catalogue in one API request."""
+        return await self._get("teams", {"league": league, "season": season})
+
     async def search_teams(self, name: str) -> dict:
         """Search team metadata without a season restriction.
 
-        We use this only as a metadata fallback (logo/code) when the primary
-        SStats team endpoint has no crest URL. Match ownership remains SStats.
+        Kept only as a last-resort metadata fallback. Bulk catalogue lookup is
+        preferred because the free API-Football plan has a small daily quota.
         """
         return await self._get("teams", {"search": name})
