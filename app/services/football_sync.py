@@ -6,14 +6,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Match, Team, Tournament
 from app.providers.api_football import APIFootballProvider
 
+API_FOOTBALL_PROVIDER = "api-football"
 CHAMPIONS_LEAGUE_ID = 2
 
 
 async def _get_or_create_tournament(session: AsyncSession, league_data: dict) -> Tournament:
     provider_id = league_data["id"]
-    tournament = await session.scalar(select(Tournament).where(Tournament.provider_id == provider_id))
+    tournament = await session.scalar(
+        select(Tournament).where(
+            Tournament.provider == API_FOOTBALL_PROVIDER,
+            Tournament.provider_id == provider_id,
+        )
+    )
     if tournament is None:
-        tournament = Tournament(provider_id=provider_id, name=league_data["name"])
+        tournament = Tournament(
+            provider=API_FOOTBALL_PROVIDER,
+            provider_id=provider_id,
+            name=league_data["name"],
+        )
         session.add(tournament)
         await session.flush()
 
@@ -24,9 +34,18 @@ async def _get_or_create_tournament(session: AsyncSession, league_data: dict) ->
 
 async def _get_or_create_team(session: AsyncSession, team_data: dict) -> Team:
     provider_id = team_data["id"]
-    team = await session.scalar(select(Team).where(Team.provider_id == provider_id))
+    team = await session.scalar(
+        select(Team).where(
+            Team.provider == API_FOOTBALL_PROVIDER,
+            Team.provider_id == provider_id,
+        )
+    )
     if team is None:
-        team = Team(provider_id=provider_id, name=team_data["name"])
+        team = Team(
+            provider=API_FOOTBALL_PROVIDER,
+            provider_id=provider_id,
+            name=team_data["name"],
+        )
         session.add(team)
         await session.flush()
 
@@ -37,10 +56,16 @@ async def _get_or_create_team(session: AsyncSession, team_data: dict) -> Team:
 
 
 async def sync_champions_league(session: AsyncSession, season: int) -> dict:
-    provider = APIFootballProvider()
-    payload = await provider.get_fixtures(CHAMPIONS_LEAGUE_ID, season)
-    fixtures = payload.get("response", [])
+    payload = await APIFootballProvider().get_fixtures(CHAMPIONS_LEAGUE_ID, season)
+    errors = payload.get("errors")
+    if errors:
+        if isinstance(errors, dict):
+            detail = "; ".join(f"{key}: {value}" for key, value in errors.items())
+        else:
+            detail = str(errors)
+        raise RuntimeError(f"API-Football error: {detail}")
 
+    fixtures = payload.get("response", [])
     created = 0
     updated = 0
 
@@ -55,10 +80,16 @@ async def sync_champions_league(session: AsyncSession, season: int) -> dict:
         home_team = await _get_or_create_team(session, teams["home"])
         away_team = await _get_or_create_team(session, teams["away"])
 
-        match = await session.scalar(select(Match).where(Match.provider_id == fixture["id"]))
+        match = await session.scalar(
+            select(Match).where(
+                Match.provider == API_FOOTBALL_PROVIDER,
+                Match.provider_id == fixture["id"],
+            )
+        )
         is_new = match is None
         if is_new:
             match = Match(
+                provider=API_FOOTBALL_PROVIDER,
                 provider_id=fixture["id"],
                 tournament_id=tournament.id,
                 season=season,
@@ -89,6 +120,7 @@ async def sync_champions_league(session: AsyncSession, season: int) -> dict:
 
     await session.commit()
     return {
+        "provider": API_FOOTBALL_PROVIDER,
         "league_id": CHAMPIONS_LEAGUE_ID,
         "season": season,
         "received": len(fixtures),
