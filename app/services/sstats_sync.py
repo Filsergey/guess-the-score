@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Match, Team, Tournament
@@ -26,6 +27,24 @@ def _parse_datetime(value) -> datetime:
     if result.tzinfo is None:
         result = result.replace(tzinfo=timezone.utc)
     return result
+
+
+def _integrity_message(exc: IntegrityError, game_id) -> str:
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None)
+    constraint = getattr(orig, "constraint_name", None)
+    detail = getattr(orig, "detail", None)
+
+    parts = [f"game_id={game_id}"]
+    if sqlstate:
+        parts.append(f"sqlstate={sqlstate}")
+    if constraint:
+        parts.append(f"constraint={constraint}")
+    if detail:
+        parts.append(f"detail={detail}")
+    if len(parts) == 1 and orig is not None:
+        parts.append(str(orig).split("\n")[0][:300])
+    return "; ".join(parts)
 
 
 async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tournament:
@@ -70,76 +89,89 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     updated = 0
     skipped = 0
     skip_reasons: dict[str, int] = {}
+    current_game_id = None
 
-    for item in items:
-        game_id = _pick(item, "id", "Id")
-        home_id = _pick(item, "homeTeamId", "HomeTeamId")
-        away_id = _pick(item, "awayTeamId", "AwayTeamId")
-        home_name = _pick(item, "homeTeamName", "HomeTeamName")
-        away_name = _pick(item, "awayTeamName", "AwayTeamName")
-        date_value = _pick(item, "date", "Date")
+    try:
+        for item in items:
+            game_id = _pick(item, "id", "Id")
+            current_game_id = game_id
+            home_id = _pick(item, "homeTeamId", "HomeTeamId")
+            away_id = _pick(item, "awayTeamId", "AwayTeamId")
+            home_name = _pick(item, "homeTeamName", "HomeTeamName")
+            away_name = _pick(item, "awayTeamName", "AwayTeamName")
+            date_value = _pick(item, "date", "Date")
 
-        required = {
-            "game_id": game_id,
-            "home_id": home_id,
-            "away_id": away_id,
-            "home_name": home_name,
-            "away_name": away_name,
-            "date": date_value,
-        }
-        missing = [key for key, value in required.items() if value is None]
-        if missing:
-            skipped += 1
-            reason = ",".join(missing)
-            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
-            continue
+            required = {
+                "game_id": game_id,
+                "home_id": home_id,
+                "away_id": away_id,
+                "home_name": home_name,
+                "away_name": away_name,
+                "date": date_value,
+            }
+            missing = [key for key, value in required.items() if value is None]
+            if missing:
+                skipped += 1
+                reason = ",".join(missing)
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+                continue
 
-        tournament = await _get_or_create_tournament(session, item)
-        home_team = await _get_or_create_team(session, int(home_id), str(home_name))
-        away_team = await _get_or_create_team(session, int(away_id), str(away_name))
+            tournament = await _get_or_create_tournament(session, item)
+            home_team = await _get_or_create_team(session, int(home_id), str(home_name))
+            away_team = await _get_or_create_team(session, int(away_id), str(away_name))
 
-        match = await session.scalar(
-            select(Match).where(
-                Match.provider == SSTATS_PROVIDER,
-                Match.provider_id == int(game_id),
+            match = await session.scalar(
+                select(Match).where(
+                    Match.provider == SSTATS_PROVIDER,
+                    Match.provider_id == int(game_id),
+                )
             )
-        )
-        is_new = match is None
-        kickoff_at = _parse_datetime(date_value)
-        status = _pick(item, "status", "Status")
+            is_new = match is None
+            kickoff_at = _parse_datetime(date_value)
+            status = _pick(item, "status", "Status")
 
-        if is_new:
-            match = Match(
-                provider=SSTATS_PROVIDER,
-                provider_id=int(game_id),
-                tournament_id=tournament.id,
-                season=int(_pick(item, "year", "Year", default=year)),
-                kickoff_at=kickoff_at,
-                status_short=f"S{status}" if status is not None else "S?",
-                home_team_id=home_team.id,
-                away_team_id=away_team.id,
-            )
-            session.add(match)
+            if is_new:
+                match = Match(
+                    provider=SSTATS_PROVIDER,
+                    provider_id=int(game_id),
+                    tournament_id=tournament.id,
+                    season=int(_pick(item, "year", "Year", default=year)),
+                    kickoff_at=kickoff_at,
+                    status_short=f"S{status}" if status is not None else "S?",
+                    home_team_id=home_team.id,
+                    away_team_id=away_team.id,
+                )
+                session.add(match)
 
-        match.tournament_id = tournament.id
-        match.season = int(_pick(item, "year", "Year", default=year))
-        match.round_name = _pick(item, "round", "Round", "roundName", "RoundName")
-        match.kickoff_at = kickoff_at
-        match.status_short = f"S{status}" if status is not None else "S?"
-        match.status_long = f"SStats status {status}" if status is not None else None
-        match.elapsed = None
-        match.home_team_id = home_team.id
-        match.away_team_id = away_team.id
-        match.home_goals = _pick(item, "scoreHome", "ScoreHome", "scoreHomeFT", "ScoreHomeFT")
-        match.away_goals = _pick(item, "scoreAway", "ScoreAway", "scoreAwayFT", "ScoreAwayFT")
-        match.updated_at = datetime.now(timezone.utc)
+            match.tournament_id = tournament.id
+            match.season = int(_pick(item, "year", "Year", default=year))
+            match.round_name = _pick(item, "round", "Round", "roundName", "RoundName")
+            match.kickoff_at = kickoff_at
+            match.status_short = f"S{status}" if status is not None else "S?"
+            match.status_long = f"SStats status {status}" if status is not None else None
+            match.elapsed = None
+            match.home_team_id = home_team.id
+            match.away_team_id = away_team.id
+            match.home_goals = _pick(item, "scoreHome", "ScoreHome", "scoreHomeFT", "ScoreHomeFT")
+            match.away_goals = _pick(item, "scoreAway", "ScoreAway", "scoreAwayFT", "ScoreAwayFT")
+            match.updated_at = datetime.now(timezone.utc)
 
-        if is_new:
-            created += 1
-        else:
-            updated += 1
+            # Flush each match so a database constraint failure points to the
+            # exact SStats game instead of only surfacing at the final commit.
+            await session.flush()
 
-    await session.commit()
+            if is_new:
+                created += 1
+            else:
+                updated += 1
+
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        raise RuntimeError(
+            "SStats database integrity error: " + _integrity_message(exc, current_game_id)
+        ) from exc
+
     return {
         "provider": SSTATS_PROVIDER,
         "league_id": CHAMPIONS_LEAGUE_ID,
