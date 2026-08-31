@@ -38,11 +38,7 @@ async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tourna
     )
     name = _pick(item, "leagueName", "LeagueName", default="UEFA Champions League")
     if tournament is None:
-        tournament = Tournament(
-            provider=SSTATS_PROVIDER,
-            provider_id=provider_id,
-            name=name,
-        )
+        tournament = Tournament(provider=SSTATS_PROVIDER, provider_id=provider_id, name=name)
         session.add(tournament)
         await session.flush()
 
@@ -67,12 +63,13 @@ async def _get_or_create_team(session: AsyncSession, provider_id: int, name: str
 
 
 async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict:
-    payload = await SStatsProvider().get_games(CHAMPIONS_LEAGUE_ID, year)
-    items = payload.get("data") or []
+    payload = await SStatsProvider().query_games(CHAMPIONS_LEAGUE_ID, year)
+    items = payload.get("data") or payload.get("response") or []
 
     created = 0
     updated = 0
     skipped = 0
+    skip_reasons: dict[str, int] = {}
 
     for item in items:
         game_id = _pick(item, "id", "Id")
@@ -82,8 +79,19 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
         away_name = _pick(item, "awayTeamName", "AwayTeamName")
         date_value = _pick(item, "date", "Date")
 
-        if None in (game_id, home_id, away_id, home_name, away_name, date_value):
+        required = {
+            "game_id": game_id,
+            "home_id": home_id,
+            "away_id": away_id,
+            "home_name": home_name,
+            "away_name": away_name,
+            "date": date_value,
+        }
+        missing = [key for key, value in required.items() if value is None]
+        if missing:
             skipped += 1
+            reason = ",".join(missing)
+            skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
             continue
 
         tournament = await _get_or_create_tournament(session, item)
@@ -122,8 +130,8 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
         match.elapsed = None
         match.home_team_id = home_team.id
         match.away_team_id = away_team.id
-        match.home_goals = _pick(item, "scoreHome", "ScoreHome")
-        match.away_goals = _pick(item, "scoreAway", "ScoreAway")
+        match.home_goals = _pick(item, "scoreHome", "ScoreHome", "scoreHomeFT", "ScoreHomeFT")
+        match.away_goals = _pick(item, "scoreAway", "ScoreAway", "scoreAwayFT", "ScoreAwayFT")
         match.updated_at = datetime.now(timezone.utc)
 
         if is_new:
@@ -140,4 +148,5 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
         "created": created,
         "updated": updated,
         "skipped": skipped,
+        "skip_reasons": skip_reasons,
     }
