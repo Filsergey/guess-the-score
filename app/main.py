@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.competitions.champions_league import classify_ucl_round
 from app.config import get_settings
 from app.database import engine, get_db
 from app.migrations import migrate_provider_keys
@@ -25,7 +26,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title=settings.app_name, version="0.6.1", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.6.2", lifespan=lifespan)
 
 
 def require_admin_token(x_admin_token: str | None) -> None:
@@ -36,12 +37,15 @@ def require_admin_token(x_admin_token: str | None) -> None:
 
 
 def serialize_match(match: Match, home_team: Team, away_team: Team) -> dict:
+    classified = classify_ucl_round(match.season, match.kickoff_at) if match.provider == "sstats" else None
+    round_name = match.round_name or (classified["round_label"] if classified else None)
+
     return {
         "id": match.id,
         "provider": match.provider,
         "provider_id": match.provider_id,
         "season": match.season,
-        "round": match.round_name,
+        "round": round_name,
         "kickoff_at": match.kickoff_at,
         "status": match.status_short,
         "status_source": match.status_long,
