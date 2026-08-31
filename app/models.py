@@ -10,9 +10,11 @@ class Base(DeclarativeBase):
 
 class Tournament(Base):
     __tablename__ = "tournaments"
+    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_tournaments_provider_external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
+    provider_id: Mapped[int] = mapped_column(Integer, index=True)
     name: Mapped[str] = mapped_column(String(150))
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     country: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -20,9 +22,11 @@ class Tournament(Base):
 
 class Team(Base):
     __tablename__ = "teams"
+    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_teams_provider_external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
+    provider_id: Mapped[int] = mapped_column(Integer, index=True)
     name: Mapped[str] = mapped_column(String(150))
     code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
@@ -30,9 +34,10 @@ class Team(Base):
 
 class Match(Base):
     __tablename__ = "matches"
-    __table_args__ = (UniqueConstraint("provider_id", name="uq_matches_provider_id"),)
+    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_matches_provider_external_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
     provider_id: Mapped[int] = mapped_column(BigInteger, index=True)
     tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"), index=True)
     season: Mapped[int] = mapped_column(Integer, index=True)
