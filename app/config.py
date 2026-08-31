@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     api_football_base_url: str = "https://v3.football.api-sports.io"
     sstats_api_key: str = ""
     admin_sync_token: str = ""
+    telegram_bot_token: str = ""
+    jwt_secret: str = ""
+    jwt_access_minutes: int = 60 * 24 * 7
+    superadmin_telegram_id: int | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
