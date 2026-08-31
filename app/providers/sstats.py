@@ -1,13 +1,23 @@
 import httpx
 
+from app.config import get_settings
+
 
 class SStatsProvider:
     BASE_URL = "https://api.sstats.net"
 
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
+    def _headers(self) -> dict[str, str]:
+        if not self.settings.sstats_api_key:
+            return {}
+        return {"Authorization": f"ApiKey {self.settings.sstats_api_key}"}
+
     async def _get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
         async with httpx.AsyncClient(timeout=20.0) as client:
-            response = await client.get(url, params=params)
+            response = await client.get(url, headers=self._headers(), params=params)
             response.raise_for_status()
             payload = response.json()
 
@@ -20,7 +30,7 @@ class SStatsProvider:
     async def _post(self, path: str, json: dict) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(url, json=json)
+            response = await client.post(url, headers=self._headers(), json=json)
             response.raise_for_status()
             payload = response.json()
 
