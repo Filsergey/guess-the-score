@@ -109,8 +109,15 @@ def _normalize_team_name(value: str) -> str:
         .replace(".", " ")
         .replace("-", " ")
         .replace("'", "")
+        .replace("’", "")
         .split()
     )
+
+
+def _api_search_name(value: str) -> str:
+    """API-Football search accepts only letters, digits and spaces."""
+    cleaned = "".join(char if (char.isalnum() or char.isspace()) else " " for char in value)
+    return " ".join(cleaned.split())
 
 
 def _pick_api_football_team(payload: dict, expected_name: str) -> dict:
@@ -371,9 +378,14 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> d
             without_logo += 1
             continue
 
+        search_name = _api_search_name(team.name)
+        if len(search_name) < 3:
+            without_logo += 1
+            continue
+
         try:
             search_requests += 1
-            payload = await api_football.search_teams(team.name)
+            payload = await api_football.search_teams(search_name)
             api_team = _pick_api_football_team(payload, team.name)
             logo = api_team.get("logo") if api_team else None
             code = api_team.get("code") if api_team else None
