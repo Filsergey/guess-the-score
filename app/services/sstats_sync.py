@@ -98,7 +98,8 @@ async def _get_or_create_team(session: AsyncSession, provider_id: int, name: str
 
 
 async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict:
-    payload = await SStatsProvider().query_games(CHAMPIONS_LEAGUE_ID, year)
+    provider = SStatsProvider()
+    payload, season_ref = await provider.competition_games(CHAMPIONS_LEAGUE_ID, year)
     items = _items(payload)
     created = updated = skipped = classified_rounds = 0
     skip_reasons: dict[str, int] = {}
@@ -129,7 +130,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     except IntegrityError as exc:
         await session.rollback(); raise RuntimeError("SStats database integrity error: "+_integrity_message(exc,current_game_id)) from exc
 
-    result={"provider":SSTATS_PROVIDER,"league_id":CHAMPIONS_LEAGUE_ID,"year":year,"received":len(items),"created":created,"updated":updated,"classified_rounds":classified_rounds,"skipped":skipped,"skip_reasons":skip_reasons}
+    result={"provider":SSTATS_PROVIDER,"league_id":CHAMPIONS_LEAGUE_ID,"year":year,"season_ref":{k:v for k,v in season_ref.items() if k!='raw'},"received":len(items),"created":created,"updated":updated,"classified_rounds":classified_rounds,"skipped":skipped,"skip_reasons":skip_reasons}
     try: result["team_metadata"] = await sync_sstats_team_metadata(session)
     except Exception as exc:
         await session.rollback(); result["team_metadata"]={"error":type(exc).__name__}
@@ -150,7 +151,6 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
     if limit is not None: query=query.limit(limit)
     teams=(await session.execute(query)).scalars().all()
 
-    # First refresh canonical SStats metadata without changing localized display names.
     for team in teams:
         src=sstats_by_id.get(team.provider_id)
         if not src: continue
