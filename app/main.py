@@ -16,6 +16,7 @@ from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
 from app.oracle import router as oracle_router
 from app.predictions import router as predictions_router
+from app.tournament_predictions import router as tournament_predictions_router
 from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 from app.services.football_sync import sync_champions_league
@@ -26,18 +27,16 @@ settings=get_settings();STATIC_DIR=Path(__file__).resolve().parent/'static'
 async def lifespan(_:FastAPI):
  async with engine.begin() as conn:await conn.run_sync(Base.metadata.create_all);await migrate_provider_keys(conn)
  scheduler_task=None
- if settings.oracle_scheduler_enabled:
-  scheduler_task=asyncio.create_task(oracle_scheduler_loop())
- try:
-  yield
+ if settings.oracle_scheduler_enabled:scheduler_task=asyncio.create_task(oracle_scheduler_loop())
+ try:yield
  finally:
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.11.3',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.12.0',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');return HTMLResponse(html.replace('</body>','<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script></body>'))
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');return HTMLResponse(html.replace('</body>','<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=1"></script></body>'))
 def require_admin_token(x_admin_token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if x_admin_token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
@@ -52,20 +51,15 @@ def serialize_sstats_details(d,g=None):
 @app.get('/health')
 async def health():return {'status':'ok','service':settings.app_name,'environment':settings.app_env}
 @app.get('/api/admin/football/leagues')
-async def football_leagues(x_admin_token:str|None=Header(default=None)):
- require_admin_token(x_admin_token);return await APIFootballProvider().get_leagues()
+async def football_leagues(x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await APIFootballProvider().get_leagues()
 @app.get('/api/admin/sstats/leagues')
-async def sstats_leagues(x_admin_token:str|None=Header(default=None)):
- require_admin_token(x_admin_token);return await SStatsProvider().get_leagues()
+async def sstats_leagues(x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_leagues()
 @app.get('/api/admin/sstats/games')
-async def sstats_games(league_id:int=Query(default=2,ge=1),year:int=Query(...,ge=2020,le=2100),x_admin_token:str|None=Header(default=None)):
- require_admin_token(x_admin_token);return await SStatsProvider().get_games(league_id,year)
+async def sstats_games(league_id:int=Query(default=2,ge=1),year:int=Query(...,ge=2020,le=2100),x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_games(league_id,year)
 @app.get('/api/admin/sstats/games/{game_id}')
-async def sstats_game(game_id:int,x_admin_token:str|None=Header(default=None)):
- require_admin_token(x_admin_token);return await SStatsProvider().get_game(game_id)
+async def sstats_game(game_id:int,x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_game(game_id)
 @app.get('/api/admin/sstats/teams/{team_id}')
-async def sstats_team(team_id:int,x_admin_token:str|None=Header(default=None)):
- require_admin_token(x_admin_token);return await SStatsProvider().get_team(team_id)
+async def sstats_team(team_id:int,x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_team(team_id)
 @app.post('/api/admin/sync/sstats/champions-league')
 async def sync_sstats_champions_league_endpoint(year:int=Query(...,ge=2020,le=2100),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
  require_admin_token(x_admin_token)
