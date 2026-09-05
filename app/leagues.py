@@ -12,7 +12,7 @@ from sqlalchemy.orm import aliased
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, User, UserLeague
-from app.predictions import prediction_points
+from app.predictions import FINAL_MATCH_STATUSES, match_is_final, prediction_points
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
 
@@ -44,6 +44,7 @@ def _score_points(ph,pa,ah,aa):
     return 1 if predicted==actual else 0
 
 def _oracle_score(op,m):
+    if not match_is_final(m) or m.home_goals is None or m.away_goals is None:return None
     if not op or op.generated_at is None or op.generated_at>=m.kickoff_at:return None
     try:
         data=json.loads(op.payload_json);ph=int(data['home_score']);pa=int(data['away_score'])
@@ -85,8 +86,9 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
         rows=(await db.execute(select(Prediction,Match).join(Match,Prediction.match_id==Match.id).where(Prediction.user_id==u.id,Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.kickoff_at>=u.registered_at))).all()
         points=outcomes=exacts=submitted=0
         for p,m in rows:
-            if m.home_goals is None or m.away_goals is None:continue
-            submitted+=1;pts=prediction_points(p,m) or 0;points+=pts
+            pts=prediction_points(p,m)
+            if pts is None:continue
+            submitted+=1;points+=pts
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
         correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
@@ -95,7 +97,6 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
         oracle_rows=(await db.execute(select(OraclePrediction,Match).join(Match,OraclePrediction.match_id==Match.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season))).all()
         points=outcomes=exacts=submitted=0
         for op,m in oracle_rows:
-            if m.home_goals is None or m.away_goals is None:continue
             score=_oracle_score(op,m)
             if score is None:continue
             _,_,pts=score;submitted+=1;points+=pts
@@ -122,7 +123,7 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
         if member is None:raise HTTPException(404,'Participant is not a member of this league')
         _,target=member
     h,a=aliased(Team),aliased(Team)
-    q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.home_goals.is_not(None),Match.away_goals.is_not(None))
+    q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
     if target is not None:q=q.where(Match.kickoff_at>=target.registered_at)
     matches=(await db.execute(q.order_by(Match.kickoff_at.desc()))).all()
     match_ids=[m.id for m,_,_ in matches]
@@ -138,7 +139,7 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
             score=_oracle_score(p,m)
             if score is not None:ph,pa,pts=score
         elif p is not None:
-            ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m) or 0
+            ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m)
         if pts is not None:
             submitted+=1;points+=pts
             if pts==3:exacts+=1
