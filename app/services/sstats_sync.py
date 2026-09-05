@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import re
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -55,7 +56,14 @@ def _integrity_message(exc: IntegrityError, game_id) -> str:
 def _norm(value: str | None) -> str:
     if not value:
         return ""
-    return " ".join(value.casefold().replace("fc", " ").replace("cf", " ").replace("fk", " ").replace("afc", " ").replace(".", " ").replace("-", " ").replace("'", "").replace("’", "").split())
+    text = value.casefold().replace("&", " and ").replace("’", "'")
+    text = re.sub(r"[^\w\s']+", " ", text, flags=re.UNICODE)
+    tokens = [token for token in text.split() if token not in {"fc", "cf", "afc", "fk", "sc", "ac"}]
+    return " ".join(tokens)
+
+
+def _has_cyrillic(value: str | None) -> bool:
+    return bool(re.search(r"[А-Яа-яЁё]", value or ""))
 
 
 async def _get_or_create_tournament(session: AsyncSession, item: dict) -> Tournament:
@@ -77,7 +85,10 @@ async def _get_or_create_team(session: AsyncSession, provider_id: int, name: str
         team = Team(provider=SSTATS_PROVIDER, provider_id=provider_id, name=name)
         session.add(team)
         await session.flush()
-    team.name = name
+    elif not _has_cyrillic(team.name):
+        # SStats owns match identity, but once UEFA has supplied a Russian display
+        # name we do not overwrite it with SStats' English name on every live sync.
+        team.name = name
     return team
 
 
@@ -89,51 +100,129 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     current_game_id = None
     try:
         for item in items:
-            game_id = _pick(item, "id", "Id"); current_game_id = game_id
-            home_id = _pick(item, "homeTeamId", "HomeTeamId"); away_id = _pick(item, "awayTeamId", "AwayTeamId")
-            home_name = _pick(item, "homeTeamName", "HomeTeamName"); away_name = _pick(item, "awayTeamName", "AwayTeamName")
+            game_id = _pick(item, "id", "Id")
+            current_game_id = game_id
+            home_id = _pick(item, "homeTeamId", "HomeTeamId")
+            away_id = _pick(item, "awayTeamId", "AwayTeamId")
+            home_name = _pick(item, "homeTeamName", "HomeTeamName")
+            away_name = _pick(item, "awayTeamName", "AwayTeamName")
             date_value = _pick(item, "date", "Date")
-            required = {"game_id":game_id,"home_id":home_id,"away_id":away_id,"home_name":home_name,"away_name":away_name,"date":date_value}
-            missing = [k for k,v in required.items() if v is None]
+            required = {"game_id": game_id, "home_id": home_id, "away_id": away_id, "home_name": home_name, "away_name": away_name, "date": date_value}
+            missing = [key for key, value in required.items() if value is None]
             if missing:
-                skipped += 1; reason=",".join(missing); skip_reasons[reason]=skip_reasons.get(reason,0)+1; continue
-            tournament = await _get_or_create_tournament(session,item)
-            home_team = await _get_or_create_team(session,int(home_id),str(home_name)); away_team = await _get_or_create_team(session,int(away_id),str(away_name))
-            match = await session.scalar(select(Match).where(Match.provider==SSTATS_PROVIDER,Match.provider_id==int(game_id)))
-            is_new = match is None; kickoff_at=_parse_datetime(date_value); season=int(_pick(item,"year","Year",default=year))
-            home_goals=_pick(item,"scoreHome","ScoreHome","scoreHomeFT","ScoreHomeFT"); away_goals=_pick(item,"scoreAway","ScoreAway","scoreAwayFT","ScoreAwayFT")
-            status_short,status_long=_normalize_status(_pick(item,"status","Status"),kickoff_at,home_goals,away_goals)
-            provider_round=_pick(item,"round","Round","roundName","RoundName"); classified=classify_ucl_round(season,kickoff_at); round_name=provider_round or (classified["round_label"] if classified else None)
-            if not provider_round and classified: classified_rounds += 1
+                skipped += 1
+                reason = ",".join(missing)
+                skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+                continue
+
+            tournament = await _get_or_create_tournament(session, item)
+            home_team = await _get_or_create_team(session, int(home_id), str(home_name))
+            away_team = await _get_or_create_team(session, int(away_id), str(away_name))
+            match = await session.scalar(select(Match).where(Match.provider == SSTATS_PROVIDER, Match.provider_id == int(game_id)))
+            is_new = match is None
+            kickoff_at = _parse_datetime(date_value)
+            season = int(_pick(item, "year", "Year", default=year))
+            home_goals = _pick(item, "scoreHome", "ScoreHome", "scoreHomeFT", "ScoreHomeFT")
+            away_goals = _pick(item, "scoreAway", "ScoreAway", "scoreAwayFT", "ScoreAwayFT")
+            status_short, status_long = _normalize_status(_pick(item, "status", "Status"), kickoff_at, home_goals, away_goals)
+            provider_round = _pick(item, "round", "Round", "roundName", "RoundName")
+            classified = classify_ucl_round(season, kickoff_at)
+            round_name = provider_round or (classified["round_label"] if classified else None)
+            if not provider_round and classified:
+                classified_rounds += 1
+
             if is_new:
-                match=Match(provider=SSTATS_PROVIDER,provider_id=int(game_id),tournament_id=tournament.id,season=season,kickoff_at=kickoff_at,status_short=status_short,home_team_id=home_team.id,away_team_id=away_team.id); session.add(match)
-            match.tournament_id=tournament.id; match.season=season; match.round_name=round_name; match.kickoff_at=kickoff_at; match.status_short=status_short; match.status_long=status_long; match.elapsed=None; match.home_team_id=home_team.id; match.away_team_id=away_team.id; match.home_goals=home_goals; match.away_goals=away_goals; match.updated_at=datetime.now(timezone.utc)
-            await session.flush(); created += int(is_new); updated += int(not is_new)
+                match = Match(provider=SSTATS_PROVIDER, provider_id=int(game_id), tournament_id=tournament.id, season=season, kickoff_at=kickoff_at, status_short=status_short, home_team_id=home_team.id, away_team_id=away_team.id)
+                session.add(match)
+            match.tournament_id = tournament.id
+            match.season = season
+            match.round_name = round_name
+            match.kickoff_at = kickoff_at
+            match.status_short = status_short
+            match.status_long = status_long
+            match.elapsed = None
+            match.home_team_id = home_team.id
+            match.away_team_id = away_team.id
+            match.home_goals = home_goals
+            match.away_goals = away_goals
+            match.updated_at = datetime.now(timezone.utc)
+            await session.flush()
+            created += int(is_new)
+            updated += int(not is_new)
         await session.commit()
     except IntegrityError as exc:
-        await session.rollback(); raise RuntimeError("SStats database integrity error: "+_integrity_message(exc,current_game_id)) from exc
-    return {"provider":SSTATS_PROVIDER,"league_id":CHAMPIONS_LEAGUE_ID,"year":year,"received":len(items),"created":created,"updated":updated,"classified_rounds":classified_rounds,"skipped":skipped,"skip_reasons":skip_reasons}
+        await session.rollback()
+        raise RuntimeError("SStats database integrity error: " + _integrity_message(exc, current_game_id)) from exc
+
+    result = {"provider": SSTATS_PROVIDER, "league_id": CHAMPIONS_LEAGUE_ID, "year": year, "received": len(items), "created": created, "updated": updated, "classified_rounds": classified_rounds, "skipped": skipped, "skip_reasons": skip_reasons}
+    # Metadata enrichment is intentionally best-effort: a temporary UEFA outage must
+    # never break the SStats match/live sync.
+    try:
+        result["team_metadata"] = await sync_sstats_team_metadata(session, limit=None)
+    except Exception as exc:
+        await session.rollback()
+        result["team_metadata"] = {"metadata_source": "uefa", "error": type(exc).__name__}
+    return result
 
 
-async def sync_sstats_team_metadata(session: AsyncSession, limit: int = 20) -> dict:
-    """Fill SStats team names/codes/logos from the official UEFA standings catalogue."""
-    season = datetime.now(timezone.utc).year + (1 if datetime.now(timezone.utc).month >= 7 else 0)
+async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = None) -> dict:
+    """Enrich SStats teams from UEFA standings using internationalName as the join key.
+
+    SStats remains the match/live provider. UEFA supplies user-facing Russian names,
+    official club codes and official crest URLs.
+    """
+    now = datetime.now(timezone.utc)
+    season = now.year + (1 if now.month >= 7 else 0)
     uefa_teams = await UEFAProvider().competition_teams(UEFA_CHAMPIONS_LEAGUE_ID, season)
-    by_name = {}
-    for team in uefa_teams:
-        for name in (team.name, team.name_ru):
-            if name:
-                by_name[_norm(name)] = team
-    teams = (await session.execute(select(Team).where(Team.provider==SSTATS_PROVIDER).order_by(Team.id).limit(limit))).scalars().all()
-    updated = unmatched = 0
+
+    by_name: dict[str, object] = {}
+    for uefa in uefa_teams:
+        for candidate in (uefa.international_name, uefa.name_ru, uefa.name):
+            key = _norm(candidate)
+            if key:
+                by_name[key] = uefa
+
+    query = select(Team).where(Team.provider == SSTATS_PROVIDER).order_by(Team.id)
+    if limit is not None:
+        query = query.limit(limit)
+    teams = (await session.execute(query)).scalars().all()
+
+    updated = unmatched = already_localized = 0
+    unmatched_names: list[str] = []
     for team in teams:
         uefa = by_name.get(_norm(team.name))
         if not uefa:
-            unmatched += 1; continue
-        if uefa.name_ru: team.name = uefa.name_ru
-        if getattr(uefa,'code',None): team.code = str(uefa.code)[:20]
-        logo = getattr(uefa,'logo_url',None)
-        if logo: team.logo_url = logo
-        updated += 1
+            unmatched += 1
+            if len(unmatched_names) < 30:
+                unmatched_names.append(team.name)
+            continue
+
+        changed = False
+        if uefa.name_ru and team.name != uefa.name_ru:
+            team.name = uefa.name_ru
+            changed = True
+        elif _has_cyrillic(team.name):
+            already_localized += 1
+        if uefa.code and team.code != str(uefa.code)[:20]:
+            team.code = str(uefa.code)[:20]
+            changed = True
+        logo = uefa.logo_medium_url or uefa.logo_url or uefa.logo_big_url or uefa.logo_small_url
+        if logo and team.logo_url != logo:
+            team.logo_url = logo
+            changed = True
+        if changed:
+            updated += 1
+
     await session.commit()
-    return {"provider":SSTATS_PROVIDER,"metadata_source":"uefa","season":season,"requested":len(teams),"updated":updated,"unmatched":unmatched,"uefa_teams":len(uefa_teams)}
+    return {
+        "provider": SSTATS_PROVIDER,
+        "metadata_source": "uefa-standings",
+        "competition_id": UEFA_CHAMPIONS_LEAGUE_ID,
+        "season_year": season,
+        "requested": len(teams),
+        "uefa_teams": len(uefa_teams),
+        "updated": updated,
+        "already_localized": already_localized,
+        "unmatched": unmatched,
+        "unmatched_names": unmatched_names,
+    }
