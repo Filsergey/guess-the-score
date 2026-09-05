@@ -80,8 +80,6 @@ async def _player_rows(db:AsyncSession,q:str|None,popular:bool,limit:int):
     if popular:
         rows=(await db.execute(base.where(Player.is_popular.is_(True)).order_by(Player.name).limit(limit))).all()
         if rows:return rows
-        # Catalog may have been created before the popular flag logic existed.
-        # In that case still show real DB players instead of an empty picker.
         return (await db.execute(base.order_by(Player.name).limit(limit))).all()
     return (await db.execute(base.order_by(Player.is_popular.desc(),Player.name).limit(limit))).all()
 
@@ -96,18 +94,34 @@ async def player_catalog_status(db:AsyncSession=Depends(get_db)):
     total=(await db.execute(select(func.count(Player.id)))).scalar_one();active=(await db.execute(select(func.count(Player.id)).where(Player.is_active.is_(True)))).scalar_one();with_blob=(await db.execute(select(func.count(Player.id)).where(Player.photo_data.is_not(None)))).scalar_one();with_source=(await db.execute(select(func.count(Player.id)).where(Player.photo_source_url.is_not(None)))).scalar_one();popular=(await db.execute(select(func.count(Player.id)).where(Player.is_popular.is_(True)))).scalar_one()
     return {'total':total,'active':active,'with_photo_blob':with_blob,'with_photo_source':with_source,'popular':popular}
 
+@router.get('/api/players/provider-check',include_in_schema=False)
+async def provider_check(team_id:int=Query(default=529,ge=1)):
+    """Temporary safe diagnostic: confirms whether API-Football squad rows contain photo URLs."""
+    try:
+        payload=await APIFootballProvider().get_squad(team_id)
+    except Exception as e:
+        return {'ok':False,'team_id':team_id,'error':type(e).__name__,'message':str(e)[:240]}
+    response=payload.get('response') or []
+    if not response:
+        return {'ok':True,'team_id':team_id,'response_count':0,'players':0,'with_photo':0,'sample':[]}
+    root=response[0] if isinstance(response[0],dict) else {};team=root.get('team') if isinstance(root.get('team'),dict) else {};rows=root.get('players') or [];rows=rows if isinstance(rows,list) else []
+    sample=[];with_photo=0
+    for row in rows:
+        if not isinstance(row,dict):continue
+        photo=row.get('photo');has=bool(isinstance(photo,str) and photo.startswith('http'))
+        if has:with_photo+=1
+        if len(sample)<8:sample.append({'id':row.get('id'),'name':row.get('name'),'position':row.get('position'),'has_photo':has,'photo':photo if has else None})
+    return {'ok':True,'team_id':team_id,'team':team.get('name'),'response_count':len(response),'players':len(rows),'with_photo':with_photo,'sample':sample}
+
 @router.get('/api/players/{player_id}/photo',include_in_schema=False)
 async def player_photo_from_db(player_id:int,db:AsyncSession=Depends(get_db)):
     p=await db.get(Player,player_id)
     if not p:raise HTTPException(404,'Player not found')
-    if p.photo_data:
-        return Response(content=p.photo_data,media_type=p.photo_media_type or 'image/jpeg',headers={'Cache-Control':'public, max-age=604800, immutable'})
+    if p.photo_data:return Response(content=p.photo_data,media_type=p.photo_media_type or 'image/jpeg',headers={'Cache-Control':'public, max-age=604800, immutable'})
     if p.photo_source_url:
-        async with httpx.AsyncClient(timeout=8.0,follow_redirects=True) as client:
-            data,ctype=await _download_photo(client,p.photo_source_url)
+        async with httpx.AsyncClient(timeout=8.0,follow_redirects=True) as client:data,ctype=await _download_photo(client,p.photo_source_url)
         if data:
-            p.photo_data=data;p.photo_media_type=ctype;await db.commit()
-            return Response(content=data,media_type=ctype or 'image/jpeg',headers={'Cache-Control':'public, max-age=604800, immutable'})
+            p.photo_data=data;p.photo_media_type=ctype;await db.commit();return Response(content=data,media_type=ctype or 'image/jpeg',headers={'Cache-Control':'public, max-age=604800, immutable'})
     raise HTTPException(404,'Player photo not found in database')
 
 @router.post('/api/admin/players/sync')
@@ -122,14 +136,12 @@ async def sync_players_catalog(limit_teams:int=Query(default=5,ge=1,le=50),offse
     return {'teams_processed':len(results),'offset':offset,'next_offset':offset+len(results),'total_players':total,'players_with_photo':with_photo,'results':results}
 
 async def bootstrap_popular_players()->None:
-    """Ensure priority clubs exist even when a previous partial sync left rows in players."""
     from app.database import SessionLocal
     priority=[('Barcelona',529),('Real Madrid',541),('Bayern Munich',157),('Manchester City',50)]
     try:
         async with SessionLocal() as db:
             for name,team_id in priority:
-                count=(await db.execute(select(func.count(Player.id)).where(Player.provider=='api-football',Player.team_provider_id==team_id))).scalar_one()
-                with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=='api-football',Player.team_provider_id==team_id,Player.photo_source_url.is_not(None)))).scalar_one()
+                count=(await db.execute(select(func.count(Player.id)).where(Player.provider=='api-football',Player.team_provider_id==team_id))).scalar_one();with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=='api-football',Player.team_provider_id==team_id,Player.photo_source_url.is_not(None)))).scalar_one()
                 if count>=10 and with_source>=10:continue
                 try:await sync_team_players(db,name,team_id,False)
                 except Exception:await db.rollback()
