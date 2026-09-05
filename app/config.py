@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_oracle_model: str = "gpt-5-mini"
     openai_oracle_enabled: bool = True
+    oracle_scheduler_enabled: bool = True
+    oracle_scheduler_interval_minutes: int = 60
+    oracle_scheduler_batch_size: int = 5
+    oracle_scheduler_max_batches: int = 4
+    oracle_scheduler_hours_ahead: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
