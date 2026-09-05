@@ -37,23 +37,71 @@ class SStatsProvider:
         return payload
 
     async def get_leagues(self) -> dict:
-        return await self._get("leagues")
+        return await self._get("Leagues")
 
-    async def get_games(self, league_id: int, year: int) -> dict:
-        return await self._get("games/list", {"LeagueId": league_id, "Year": year})
+    async def get_games(
+        self,
+        league_id: int | None = None,
+        year: int | None = None,
+        season_uid: str | None = None,
+        offset: int = 0,
+        limit: int = 1000,
+        live: bool | None = None,
+        upcoming: bool | None = None,
+        ended: bool | None = None,
+    ) -> dict:
+        params: dict[str, object] = {"Offset": offset, "Limit": limit}
+        if league_id is not None: params["LeagueId"] = league_id
+        if year is not None: params["Year"] = year
+        if season_uid: params["SeasonUid"] = season_uid
+        if live is not None: params["Live"] = live
+        if upcoming is not None: params["Upcoming"] = upcoming
+        if ended is not None: params["Ended"] = ended
+        return await self._get("Games/list", params)
+
+    async def get_all_games(self, league_id: int | None = None, year: int | None = None, season_uid: str | None = None) -> dict:
+        """Read every page from the documented Games/list endpoint."""
+        offset = 0
+        limit = 1000
+        rows: list[dict] = []
+        first_payload: dict = {}
+        while True:
+            payload = await self.get_games(league_id=league_id, year=year, season_uid=season_uid, offset=offset, limit=limit)
+            if not first_payload: first_payload = payload
+            page = payload.get("data") or payload.get("response") or []
+            if not isinstance(page, list): page = []
+            rows.extend(page)
+            total = payload.get("TotalCount") or payload.get("totalCount") or payload.get("count")
+            if not page or len(page) < limit or (total is not None and len(rows) >= int(total)): break
+            offset += len(page)
+        result = dict(first_payload)
+        result["data"] = rows
+        result["count"] = len(rows)
+        result["offset"] = 0
+        return result
 
     async def query_games(self, league_id: int, year: int) -> dict:
-        return await self._post("games/query", {"Condition": f"LeagueId = {league_id} AND Year = {year}", "Fields": ["Id","SeasonUid","Date","LeagueId","LeagueName","CountryName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueCity"], "Order": "Date ASC", "Limit": 1000, "Format": "json", "Timezone": 0})
+        """Compatibility alias. Normal match synchronization uses GET Games/list."""
+        return await self.get_all_games(league_id=league_id, year=year)
 
     async def query_game_details(self, game_id: int) -> dict:
+        # Keep Games/query only for analytics fields not guaranteed by Games/{id}.
         fields = ["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
-        return await self._post("games/query", {"Condition": f"Id = {game_id}", "Fields": fields, "Limit": 1, "Format": "json", "Timezone": 0})
+        return await self._post("Games/query", {"Condition": f"Id = {game_id}", "Fields": fields, "Limit": 1, "Format": "json", "Timezone": 0})
 
     async def get_game(self, game_id: int) -> dict:
-        return await self._get(f"games/{game_id}")
+        return await self._get(f"Games/{game_id}")
 
     async def get_glicko(self, game_id: int) -> dict:
-        return await self._get(f"games/glicko/{game_id}")
+        return await self._get(f"Games/glicko/{game_id}")
+
+    async def get_standings(self, league_id: int | None = None, year: int | None = None, season_uid: str | None = None) -> dict:
+        params: dict[str, object] = {}
+        if season_uid: params["uid"] = season_uid
+        else:
+            if league_id is not None: params["leagueId"] = league_id
+            if year is not None: params["year"] = year
+        return await self._get("Seasons/standings", params)
 
     async def get_teams(self, name: str | None = None, country: str | None = None, offset: int = 0, limit: int = 1000) -> dict:
         params = {"Offset": offset, "Limit": limit}
@@ -74,3 +122,6 @@ class SStatsProvider:
 
     async def get_player(self, player_id: int) -> dict:
         return await self._get(f"Players/{player_id}")
+
+    async def get_player_events(self, player_id: int, include_assists: bool = True) -> dict:
+        return await self._get(f"Players/{player_id}/events", {"includeAssists": include_assists})
