@@ -27,11 +27,17 @@ class TournamentPredictionBody(BaseModel):
 def _norm(value:str|None)->str:
  if not value:return ''
  text=value.casefold().replace('&',' and ').replace('’',"'")
+ text=text.replace('ø','o').replace('ö','o').replace('ó','o').replace('ò','o').replace('ô','o').replace('ü','u').replace('ú','u').replace('ä','a').replace('á','a').replace('à','a').replace('é','e').replace('è','e').replace('í','i').replace('ñ','n').replace('ç','c')
  text=re.sub(r"[^\w\s']+",' ',text,flags=re.UNICODE)
- return ' '.join(x for x in text.split() if x not in {'fc','cf','afc','fk','sc','ac'})
+ words=[x for x in text.split() if x not in {'fc','cf','afc','fk','sc','ac'}]
+ aliases={'atletico madrid':'atleti','atletico de madrid':'atleti','club atletico de madrid':'atleti','bodo glimt':'bodo glimt','bodo/glimt':'bodo glimt','lask linz':'lask'}
+ normalized=' '.join(words)
+ return aliases.get(normalized,normalized)
 
 def _norm_code(value:str|None)->str:
- return re.sub(r'[^A-Z0-9]','',str(value or '').upper())
+ code=re.sub(r'[^A-Z0-9]','',str(value or '').upper())
+ aliases={'LAS':'LASK'}
+ return aliases.get(code,code)
 
 async def _main_stage_matches(db,provider,season):
  matches=(await db.execute(select(Match).where(Match.provider==provider,Match.season==season).order_by(Match.kickoff_at))).scalars().all()
