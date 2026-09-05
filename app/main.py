@@ -70,7 +70,7 @@ async def sync_sstats(year:int=Query(...,ge=2020,le=2100),x_admin_token:str|None
  try:return await sync_sstats_champions_league(db,year)
  except Exception as e:await db.rollback();raise HTTPException(502,f'SStats Champions League sync failed: {type(e).__name__}')
 @app.post('/api/admin/sync/sstats/team-metadata')
-async def sync_metadata(limit:int=Query(default=20,ge=1,le=25),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
+async def sync_metadata(limit:int|None=Query(default=None,ge=1,le=500),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
  require_admin_token(x_admin_token)
  try:return await sync_sstats_team_metadata(db,limit)
  except Exception as e:await db.rollback();raise HTTPException(502,f'SStats team metadata sync failed: {type(e).__name__}')
