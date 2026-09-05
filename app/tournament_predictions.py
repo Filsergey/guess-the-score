@@ -30,6 +30,9 @@ def _norm(value:str|None)->str:
  text=re.sub(r"[^\w\s']+",' ',text,flags=re.UNICODE)
  return ' '.join(x for x in text.split() if x not in {'fc','cf','afc','fk','sc','ac'})
 
+def _norm_code(value:str|None)->str:
+ return re.sub(r'[^A-Z0-9]','',str(value or '').upper())
+
 async def _main_stage_matches(db,provider,season):
  matches=(await db.execute(select(Match).where(Match.provider==provider,Match.season==season).order_by(Match.kickoff_at))).scalars().all()
  if provider=='sstats' and season==2026:return [m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None]
@@ -61,22 +64,32 @@ async def _competition_team_models(db,provider,season):
  teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
  if provider!='sstats':return teams
 
- # The authoritative participant list comes from UEFA standings. Do not depend on
- # a previous enrichment run having already filled Team.uefa_id.
  season_year=season+1 if season<2100 else season
  try:uefa_teams=await UEFAProvider().competition_teams(1,season_year)
  except Exception:return [t for t in teams if t.uefa_id is not None]
+
  by_name={}
+ code_candidates={}
  for u in uefa_teams:
   for candidate in (u.international_name,u.name_ru,u.name):
    key=_norm(candidate)
    if key:by_name[key]=u
+  code=_norm_code(u.code)
+  if code:code_candidates.setdefault(code,[]).append(u)
+ by_code={code:rows[0] for code,rows in code_candidates.items() if len(rows)==1}
+
  eligible=[];changed=False
  for t in teams:
   u=None
+  # Prefer names because they are the strongest join key.
   for candidate in (getattr(t,'source_name',None),t.name):
    key=_norm(candidate)
    if key and key in by_name:u=by_name[key];break
+  # Some SStats/UEFA names differ substantially (for example localized or
+  # sponsor-less names). Fall back to a unique club code when available.
+  if not u:
+   code=_norm_code(t.code)
+   if code:u=by_code.get(code)
   if not u:continue
   eligible.append(t)
   if t.uefa_id!=u.id:t.uefa_id=u.id;changed=True
