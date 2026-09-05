@@ -1,8 +1,9 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,10 +35,20 @@ async def lifespan(_:FastAPI):
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.13.2',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.13.3',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=6"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+@app.get('/api/team-logo/{team_id}',include_in_schema=False)
+async def team_logo_proxy(team_id:int):
+ url=f'https://media.api-sports.io/football/teams/{team_id}.png'
+ try:
+  async with httpx.AsyncClient(timeout=10.0,follow_redirects=True) as client:r=await client.get(url)
+  if r.status_code!=200 or not r.content:raise HTTPException(404,'Team logo not found')
+  ctype=r.headers.get('content-type','image/png')
+  return Response(content=r.content,media_type=ctype,headers={'Cache-Control':'public, max-age=604800, immutable'})
+ except HTTPException:raise
+ except Exception:raise HTTPException(502,'Team logo unavailable')
 def require_admin_token(x_admin_token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if x_admin_token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
