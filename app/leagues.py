@@ -7,10 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import LeagueMember, Match, OraclePrediction, Prediction, User, UserLeague
+from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, User, UserLeague
 from app.predictions import prediction_points
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
@@ -41,6 +42,13 @@ def _score_points(ph,pa,ah,aa):
     if ph==ah and pa==aa:return 3
     predicted=(ph>pa)-(ph<pa);actual=(ah>aa)-(ah<aa)
     return 1 if predicted==actual else 0
+
+def _oracle_score(op,m):
+    if not op or op.generated_at is None or op.generated_at>=m.kickoff_at:return None
+    try:
+        data=json.loads(op.payload_json);ph=int(data['home_score']);pa=int(data['away_score'])
+    except (ValueError,TypeError,KeyError,json.JSONDecodeError):return None
+    return ph,pa,_score_points(ph,pa,m.home_goals,m.away_goals)
 
 @router.get('/mine')
 async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
@@ -88,12 +96,9 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
         points=outcomes=exacts=submitted=0
         for op,m in oracle_rows:
             if m.home_goals is None or m.away_goals is None:continue
-            # Only predictions generated before kickoff are eligible. This prevents post-match generation from scoring.
-            if op.generated_at is None or op.generated_at>=m.kickoff_at:continue
-            try:
-                data=json.loads(op.payload_json);ph=int(data['home_score']);pa=int(data['away_score'])
-            except (ValueError,TypeError,KeyError,json.JSONDecodeError):continue
-            submitted+=1;pts=_score_points(ph,pa,m.home_goals,m.away_goals);points+=pts
+            score=_oracle_score(op,m)
+            if score is None:continue
+            _,_,pts=score;submitted+=1;points+=pts
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
         correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
@@ -101,3 +106,44 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
     result.sort(key=lambda x:(-x['points'],-x['exacts'],-x['outcomes'],x['display_name'].lower()))
     for i,row in enumerate(result,1):row['place']=i
     return {'league':serialize_league(league,membership.role if membership else 'superadmin',len(members)),'count':len(result),'response':result}
+
+@router.get('/{league_id}/participants/{participant}/history')
+async def participant_history(league_id:int,participant:str,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    membership=await _membership(league_id,user,db);league=await db.get(UserLeague,league_id)
+    if league is None:raise HTTPException(404,'League not found')
+    is_oracle=participant.lower()=='oracle'
+    target=None
+    if is_oracle:
+        if not league.include_oracle:raise HTTPException(404,'Oracle is not enabled in this league')
+    else:
+        try:user_id=int(participant)
+        except ValueError:raise HTTPException(422,'Invalid participant')
+        member=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id,LeagueMember.user_id==user_id))).first()
+        if member is None:raise HTTPException(404,'Participant is not a member of this league')
+        _,target=member
+    h,a=aliased(Team),aliased(Team)
+    q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.home_goals.is_not(None),Match.away_goals.is_not(None))
+    if target is not None:q=q.where(Match.kickoff_at>=target.registered_at)
+    matches=(await db.execute(q.order_by(Match.kickoff_at.desc()))).all()
+    match_ids=[m.id for m,_,_ in matches]
+    if is_oracle:
+        preds=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
+    else:
+        preds=(await db.execute(select(Prediction).where(Prediction.user_id==target.id,Prediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
+    pred_by_match={p.match_id:p for p in preds}
+    items=[];points=outcomes=exacts=submitted=0
+    for m,home,away in matches:
+        p=pred_by_match.get(m.id);ph=pa=pts=None
+        if is_oracle:
+            score=_oracle_score(p,m)
+            if score is not None:ph,pa,pts=score
+        elif p is not None:
+            ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m) or 0
+        if pts is not None:
+            submitted+=1;points+=pts
+            if pts==3:exacts+=1
+            elif pts==1:outcomes+=1
+        items.append({'match_id':m.id,'kickoff_at':m.kickoff_at,'round':m.round_name,'home':{'name':home.name,'logo':home.logo_url,'goals':m.home_goals},'away':{'name':away.name,'logo':away.logo_url,'goals':m.away_goals},'prediction':{'home_score':ph,'away_score':pa} if pts is not None else None,'points':pts or 0,'submitted':pts is not None})
+    correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
+    participant_data={'user_id':None,'display_name':'Оракул','avatar_url':None,'is_oracle':True} if is_oracle else {'user_id':target.id,'display_name':target.display_name,'avatar_url':target.avatar_url,'is_oracle':False,'registered_at':target.registered_at}
+    return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items)},'count':len(items),'response':items}
