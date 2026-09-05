@@ -36,8 +36,62 @@ class SStatsProvider:
             raise RuntimeError(f"SStats error: {payload.get('message') or 'unknown error'}")
         return payload
 
+    @staticmethod
+    def _value(row: dict, *names: str):
+        for name in names:
+            if name in row:
+                return row[name]
+        return None
+
+    @classmethod
+    def _season_from_league_row(cls, row: dict, year: int) -> dict | None:
+        containers = []
+        for key in ("seasons", "Seasons", "season", "Season"):
+            value = row.get(key)
+            if isinstance(value, list):
+                containers.extend(x for x in value if isinstance(x, dict))
+            elif isinstance(value, dict):
+                containers.append(value)
+        for season in containers:
+            season_year = cls._value(season, "year", "Year", "seasonYear", "SeasonYear")
+            if season_year is not None:
+                try:
+                    if int(season_year) != int(year):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            uid = cls._value(season, "uid", "Uid", "UID", "seasonUid", "SeasonUid", "id", "Id")
+            if uid:
+                return {"uid": str(uid), "year": int(year), "raw": season}
+        return None
+
     async def get_leagues(self) -> dict:
         return await self._get("Leagues")
+
+    async def resolve_season_uid(self, league_id: int, year: int) -> dict | None:
+        """Resolve a stable SStats SeasonUid from /Leagues for a league/year pair."""
+        payload = await self.get_leagues()
+        rows = payload.get("data") or payload.get("response") or []
+        if isinstance(rows, dict):
+            rows = [rows]
+        if not isinstance(rows, list):
+            return None
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            raw_id = self._value(row, "id", "Id", "leagueId", "LeagueId")
+            try:
+                same_league = raw_id is not None and int(raw_id) == int(league_id)
+            except (TypeError, ValueError):
+                same_league = False
+            if not same_league:
+                continue
+            season = self._season_from_league_row(row, year)
+            if season:
+                season["league_id"] = int(league_id)
+                season["league_name"] = self._value(row, "name", "Name", "leagueName", "LeagueName")
+                return season
+        return None
 
     async def get_games(
         self,
@@ -60,7 +114,6 @@ class SStatsProvider:
         return await self._get("Games/list", params)
 
     async def get_all_games(self, league_id: int | None = None, year: int | None = None, season_uid: str | None = None) -> dict:
-        """Read every page from the documented Games/list endpoint."""
         offset = 0
         limit = 1000
         rows: list[dict] = []
@@ -80,12 +133,20 @@ class SStatsProvider:
         result["offset"] = 0
         return result
 
+    async def competition_games(self, league_id: int, year: int) -> tuple[dict, dict]:
+        """Prefer stable SeasonUid, with league/year fallback for older SStats payloads."""
+        season = await self.resolve_season_uid(league_id, year)
+        if season and season.get("uid"):
+            payload = await self.get_all_games(season_uid=season["uid"])
+            return payload, {"mode": "season_uid", **season}
+        payload = await self.get_all_games(league_id=league_id, year=year)
+        return payload, {"mode": "league_year", "league_id": league_id, "year": year, "uid": None}
+
     async def query_games(self, league_id: int, year: int) -> dict:
-        """Compatibility alias. Normal match synchronization uses GET Games/list."""
-        return await self.get_all_games(league_id=league_id, year=year)
+        payload, _ = await self.competition_games(league_id, year)
+        return payload
 
     async def query_game_details(self, game_id: int) -> dict:
-        # Keep Games/query only for analytics fields not guaranteed by Games/{id}.
         fields = ["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
         return await self._post("Games/query", {"Condition": f"Id = {game_id}", "Fields": fields, "Limit": 1, "Format": "json", "Timezone": 0})
 
