@@ -17,4 +17,5 @@ style.textContent=`
 }
 `;
 document.head.appendChild(style);
+var feed=document.createElement('script');feed.src='/static/match-feed.js?v=1';document.body.appendChild(feed);
 })();
