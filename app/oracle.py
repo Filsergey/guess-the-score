@@ -1,4 +1,4 @@
-import json, math
+import json, math, re
 from fastapi import APIRouter, Depends, HTTPException
 from openai import AsyncOpenAI
 from sqlalchemy import or_, select
@@ -47,6 +47,16 @@ def _form_xg(h,a):
     return max(.2,min(3.8,(h['gf']+a['ga'])/2*1.08)),max(.2,min(3.8,(a['gf']+h['ga'])/2))
 def _json_text(text):
     t=text.strip();t=t[t.find('{'):t.rfind('}')+1] if '{' in t and '}' in t else t;return json.loads(t)
+def _clean_text(v):
+    if v is None:return None
+    s=str(v)
+    # OpenAI web-search answers can occasionally leak markdown-style citations into JSON fields.
+    s=re.sub(r'\(\[[^\]]+\]\s*\(https?://[^\s)]+(?:\([^)]*\)[^\s)]*)?\)\)', '', s)
+    s=re.sub(r'\[[^\]]+\]\s*\(https?://[^)]+\)', '', s)
+    s=re.sub(r'https?://\S+', '', s)
+    s=re.sub(r'\(\s*\)', '', s)
+    s=re.sub(r'\s+([,.;:!?])', r'\1', s)
+    return re.sub(r'\s{2,}', ' ', s).strip()
 def _normalize_web(data):
     hs=max(0,min(20,int(_num(data.get('home_score')) or 0)));as_=max(0,min(20,int(_num(data.get('away_score')) or 0)))
     p=data.get('probabilities') if isinstance(data.get('probabilities'),dict) else {}
@@ -58,17 +68,19 @@ def _normalize_web(data):
     else:ph=pd=pa=None
     confidence=max(0,min(100,int(_num(data.get('confidence')) or (max([x for x in (ph,pd,pa) if x is not None],default=50)))))
     q=str(data.get('data_quality') or 'medium').lower();q=q if q in ('high','medium','low') else 'medium'
-    def strings(v):return [str(x) for x in v if x] if isinstance(v,list) else []
-    return {'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':confidence,'data_quality':q,'probabilities':{'home':ph,'draw':pd,'away':pa} if ph is not None else None,'reasoning':str(data.get('reasoning') or 'ИИ выполнил веб-исследование матча.'),'form':data.get('form') if isinstance(data.get('form'),dict) else None,'head_to_head':data.get('head_to_head'),'injuries':strings(data.get('injuries')),'key_factors':strings(data.get('key_factors')),'failure_risks':strings(data.get('failure_risks')),'researched_at':data.get('researched_at')}
+    def strings(v):return [_clean_text(x) for x in v if _clean_text(x)] if isinstance(v,list) else []
+    form=data.get('form') if isinstance(data.get('form'),dict) else None
+    if form:form={'home':_clean_text(form.get('home')),'away':_clean_text(form.get('away'))}
+    return {'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':confidence,'data_quality':q,'probabilities':{'home':ph,'draw':pd,'away':pa} if ph is not None else None,'reasoning':_clean_text(data.get('reasoning')) or 'ИИ выполнил веб-исследование матча.','form':form,'head_to_head':_clean_text(data.get('head_to_head')),'injuries':strings(data.get('injuries')),'key_factors':strings(data.get('key_factors')),'failure_risks':strings(data.get('failure_risks')),'researched_at':data.get('researched_at')}
 async def _web_oracle(match,home,away,local_context):
     if not settings.openai_oracle_enabled or not settings.openai_api_key:return None
     client=AsyncOpenAI(api_key=settings.openai_api_key)
     prompt=f'''Ты футбольный аналитик приложения «Угадай счёт». Матч: {home.name} — {away.name}. Дата и время: {match.kickoff_at.isoformat()}. Сезон: {match.season}.
 Проведи актуальное веб-исследование ДО того, как выберешь счёт. Найди и сопоставь минимум несколько независимых источников. Приоритет: официальные сайты клубов/турнира, UEFA, крупные спортивные СМИ и надёжные статистические сайты.
 Проверь: 1) последние 5-10 матчей каждой команды во всех турнирах с результатами; 2) домашнюю форму {home.name} и гостевую форму {away.name}; 3) последние очные встречи; 4) забитые/пропущенные, xG/xGA если надёжно доступны; 5) травмы, дисквалификации и сомнительных игроков; 6) ожидаемые составы/ротацию; 7) турнирное положение и мотивацию; 8) свежие новости непосредственно перед матчем; 9) коэффициенты/рыночные вероятности, если доступны.
-Очень важно: не используй сведения о другом матче с похожими командами/датой. Сверь дату и участников. Не выдумывай xG, травмы или статистику. Если чего-то нет — так и учитывай как отсутствие данных. Не вставляй URL или markdown-ссылки внутрь reasoning/key_factors: источники приложение покажет отдельно.
+Очень важно: не используй сведения о другом матче с похожими командами/датой. Сверь дату и участников. Не выдумывай xG, травмы или статистику. Конкретную травму, дисквалификацию или отсутствие игрока указывай только когда это подтверждается надёжным источником; спорные сведения помечай как неподтверждённые и не делай их ключевым фактором. Если чего-то нет — так и учитывай как отсутствие данных. Не вставляй URL, домены, markdown-ссылки, скобочные citations или названия источников внутрь JSON-текста: источники приложение покажет отдельно.
 Наши локальные структурированные данные (могут быть неполными): {json.dumps(local_context,ensure_ascii=False,default=str)}.
-После исследования оцени вероятности 1/X/2 и наиболее вероятный ТОЧНЫЙ счёт. Верни ТОЛЬКО JSON без markdown: {{"home_score":int,"away_score":int,"confidence":int,"data_quality":"high|medium|low","probabilities":{{"home":number,"draw":number,"away":number}},"reasoning":"2-4 предложения по-русски с конкретными найденными фактами, без URL","form":{{"home":"последние результаты/тенденция кратко","away":"последние результаты/тенденция кратко"}},"head_to_head":"кратко","injuries":["конкретные подтверждённые потери или нет подтверждённых данных"],"key_factors":["3-6 конкретных факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}. Вероятности должны суммироваться до 100.'''
+После исследования оцени вероятности 1/X/2 и наиболее вероятный ТОЧНЫЙ счёт. Верни ТОЛЬКО JSON без markdown: {{"home_score":int,"away_score":int,"confidence":int,"data_quality":"high|medium|low","probabilities":{{"home":number,"draw":number,"away":number}},"reasoning":"2-4 предложения по-русски с конкретными найденными фактами, без ссылок и названий источников","form":{{"home":"последние результаты/тенденция кратко","away":"последние результаты/тенденция кратко"}},"head_to_head":"кратко","injuries":["только подтверждённые потери или явно указать, что надёжных данных нет"],"key_factors":["3-6 конкретных факторов без ссылок"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}. Вероятности должны суммироваться до 100.'''
     try:
         r=await client.responses.create(model=settings.openai_oracle_model,tools=[{'type':'web_search'}],tool_choice='auto',include=['web_search_call.action.sources'],input=prompt)
         data=_normalize_web(_json_text(r.output_text));sources=[]
