@@ -127,10 +127,19 @@ async def _web_oracle_batch(items):
     except Exception:return {}
 
 async def _save_cache(db,match_id,data):
-    row=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id==match_id))).scalar_one_or_none();now=datetime.now(timezone.utc)
-    data['schema_version']=CACHE_SCHEMA_VERSION;payload=json.dumps(data,ensure_ascii=False,default=str)
-    if row is None:row=OraclePrediction(match_id=match_id,payload_json=payload,source=data.get('source','openai-web'),generated_at=now,updated_at=now);db.add(row)
-    else:row.payload_json=payload;row.source=data.get('source','openai-web');row.generated_at=now;row.updated_at=now
+    match=await db.get(Match,match_id);now=datetime.now(timezone.utc)
+    if match is None:return False
+    row=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id==match_id))).scalar_one_or_none()
+    # Forecasts become immutable at kickoff. Never create or overwrite a prediction after the match starts.
+    lock_at=match.kickoff_at
+    if now>=lock_at:return False
+    if row is not None and row.locked_at is not None and now>=row.locked_at:return False
+    data['schema_version']=CACHE_SCHEMA_VERSION;data['locked_at']=lock_at.isoformat();payload=json.dumps(data,ensure_ascii=False,default=str)
+    if row is None:
+        row=OraclePrediction(match_id=match_id,payload_json=payload,source=data.get('source','openai-web'),generated_at=now,locked_at=lock_at,updated_at=now);db.add(row)
+    else:
+        row.payload_json=payload;row.source=data.get('source','openai-web');row.generated_at=now;row.locked_at=lock_at;row.updated_at=now
+    return True
 
 async def _get_cache(db,match_id):
     row=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id==match_id))).scalar_one_or_none()
@@ -138,16 +147,17 @@ async def _get_cache(db,match_id):
     try:
         data=json.loads(row.payload_json)
         if int(data.get('schema_version') or 0)<CACHE_SCHEMA_VERSION:return None
-        data.pop('sources',None);data['cached']=True;data['generated_at']=row.generated_at;return data
+        data.pop('sources',None);data['cached']=True;data['generated_at']=row.generated_at;data['locked_at']=row.locked_at;return data
     except Exception:return None
 
 def _needs_refresh(match,cache_row,now):
+    if match.kickoff_at<=now:return False
     if cache_row is None:return True
+    if cache_row.locked_at is not None and now>=cache_row.locked_at:return False
     try:
         cached=json.loads(cache_row.payload_json)
         if int(cached.get('schema_version') or 0)<CACHE_SCHEMA_VERSION:return True
     except Exception:return True
-    if match.kickoff_at<=now:return False
     until=match.kickoff_at-now;age=now-cache_row.generated_at
     if until<=timedelta(hours=3):return age>timedelta(hours=2)
     if until<=timedelta(hours=30):return age>timedelta(hours=12)
@@ -182,13 +192,14 @@ async def generate_batch(batch_size:int=Query(default=5,ge=1,le=10),hours_ahead:
         if force or _needs_refresh(m,cache,now):selected.append(m)
         if len(selected)>=batch_size:break
     if not selected:return {'requested':0,'generated':0,'message':'No Oracle predictions need refresh'}
-    items=[await _match_context(m,db) for m in selected];generated=await _web_oracle_batch(items)
+    items=[await _match_context(m,db) for m in selected];generated=await _web_oracle_batch(items);saved=[]
     for ctx in items:
         data=generated.get(ctx['match'].id)
         if data:
-            data['details_errors']=ctx['errors'];await _save_cache(db,ctx['match'].id,data)
+            data['details_errors']=ctx['errors']
+            if await _save_cache(db,ctx['match'].id,data):saved.append(ctx['match'].id)
     await db.commit()
-    return {'requested':len(selected),'generated':len(generated),'match_ids':[m.id for m in selected],'generated_ids':sorted(generated.keys()),'batch_size':batch_size,'hours_ahead':hours_ahead}
+    return {'requested':len(selected),'generated':len(saved),'match_ids':[m.id for m in selected],'generated_ids':sorted(saved),'batch_size':batch_size,'hours_ahead':hours_ahead}
 
 @router.get('/matches/{match_id}')
 async def oracle_prediction(match_id:int,db:AsyncSession=Depends(get_db)):
@@ -196,7 +207,12 @@ async def oracle_prediction(match_id:int,db:AsyncSession=Depends(get_db)):
     if match is None:raise HTTPException(404,'Match not found')
     cached=await _get_cache(db,match_id)
     if cached:return cached
+    now=datetime.now(timezone.utc)
+    if match.kickoff_at<=now:
+        raise HTTPException(409,'Оракул не успел сделать прогноз до начала матча')
     ctx=await _match_context(match,db);generated=await _web_oracle_batch([ctx]);data=generated.get(match_id)
     if data:
-        data['details_errors']=ctx['errors'];await _save_cache(db,match_id,data);await db.commit();data['cached']=False;return data
+        data['details_errors']=ctx['errors']
+        if await _save_cache(db,match_id,data):
+            await db.commit();data['cached']=False;data['locked_at']=match.kickoff_at;return data
     return await _fallback(ctx)
