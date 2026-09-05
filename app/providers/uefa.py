@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 from bs4 import BeautifulSoup
@@ -20,6 +20,7 @@ class UEFATeam:
     logo_small_url: str | None = None
     logo_medium_url: str | None = None
     logo_big_url: str | None = None
+    aliases: tuple[str, ...] = field(default_factory=tuple)
 
 @dataclass(slots=True)
 class UEFAPlayer:
@@ -50,10 +51,24 @@ class UEFAProvider:
             for item in candidates:
                 team=item.get("team") if isinstance(item,dict) else None
                 if not isinstance(team,dict) or not team.get("id"):continue
-                translations=team.get("translations") or {};display=(translations.get("displayName") or {}) if isinstance(translations,dict) else {}
+                translations=team.get("translations") or {}
+                display=(translations.get("displayName") or {}) if isinstance(translations,dict) else {}
+                official=(translations.get("displayOfficialName") or {}) if isinstance(translations,dict) else {}
+                short=(translations.get("shortName") or {}) if isinstance(translations,dict) else {}
                 tid=int(team["id"]);ru=display.get("RU") or display.get("ru");international=team.get("internationalName") or display.get("EN") or display.get("en")
+                aliases=[]
+                for value in (international,team.get("teamCode"),team.get("code")):
+                    if value:aliases.append(str(value))
+                for bucket in (display,official,short):
+                    if isinstance(bucket,dict):
+                        for value in bucket.values():
+                            if value:aliases.append(str(value))
+                for key in ("displayName","displayOfficialName","shortName"):
+                    value=team.get(key)
+                    if isinstance(value,str) and value:aliases.append(value)
+                aliases=tuple(dict.fromkeys(aliases))
                 small=team.get("smallLogoUrl") or team.get("logoUrl");medium=team.get("mediumLogoUrl");big=team.get("bigLogoUrl")
-                teams[tid]=UEFATeam(id=tid,name=str(ru or international or tid),name_ru=ru,country_code=team.get("countryCode") or team.get("country"),logo_url=medium or big or small,code=team.get("teamCode") or team.get("code"),international_name=international,logo_small_url=small,logo_medium_url=medium,logo_big_url=big)
+                teams[tid]=UEFATeam(id=tid,name=str(ru or international or tid),name_ru=ru,country_code=team.get("countryCode") or team.get("country"),logo_url=medium or big or small,code=team.get("teamCode") or team.get("code"),international_name=international,logo_small_url=small,logo_medium_url=medium,logo_big_url=big,aliases=aliases)
         return list(teams.values())
 
     @staticmethod
