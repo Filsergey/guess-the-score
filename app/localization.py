@@ -19,9 +19,16 @@ TEAM_NAMES_RU = {
     'Qarabag': 'Карабах', 'Qarabağ': 'Карабах', 'Pafos': 'Пафос', 'Kairat Almaty': 'Кайрат',
 }
 
+def normalize_team_name(value: str | None) -> str:
+    if not value:
+        return ''
+    return ' '.join(
+        value.lower().replace('fc',' ').replace('cf',' ').replace('fk',' ').replace('afc',' ')
+        .replace('.',' ').replace('-',' ').replace("'",'').replace('’','').split()
+    )
+
 def team_name_ru(name: str | None) -> str | None:
-    if not name:
-        return name
+    if not name:return name
     return TEAM_NAMES_RU.get(name, name)
 
 ROUND_NAMES_RU = {
@@ -30,10 +37,7 @@ ROUND_NAMES_RU = {
 }
 
 def round_name_ru(label: str | None) -> str | None:
-    if not label:
-        return label
-    value = label
-    for en, ru in ROUND_NAMES_RU.items():
-        value = value.replace(en, ru)
-    value = value.replace('Matchday ', 'Тур ').replace('Leg ', 'Матч ')
-    return value
+    if not label:return label
+    value=label
+    for en,ru in ROUND_NAMES_RU.items():value=value.replace(en,ru)
+    return value.replace('Matchday ','Тур ').replace('Leg ','Матч ')
