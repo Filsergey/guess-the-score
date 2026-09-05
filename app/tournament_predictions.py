@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import re
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
@@ -8,6 +9,7 @@ from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
 from app.localization import team_name_ru
 from app.models import Match, Player, Team, TournamentPrediction, User
+from app.providers.uefa import UEFAProvider
 
 router=APIRouter(prefix='/api/tournament-predictions',tags=['tournament-predictions'])
 
@@ -21,6 +23,12 @@ class TournamentPredictionBody(BaseModel):
  top_scorer_player_id:int|None=None
  top_assistant_player_id:int|None=None
  best_player_player_id:int|None=None
+
+def _norm(value:str|None)->str:
+ if not value:return ''
+ text=value.casefold().replace('&',' and ').replace('’',"'")
+ text=re.sub(r"[^\w\s']+",' ',text,flags=re.UNICODE)
+ return ' '.join(x for x in text.split() if x not in {'fc','cf','afc','fk','sc','ac'})
 
 async def _main_stage_matches(db,provider,season):
  matches=(await db.execute(select(Match).where(Match.provider==provider,Match.season==season).order_by(Match.kickoff_at))).scalars().all()
@@ -47,18 +55,37 @@ async def _out(db,p,deadline):
  return result
 
 async def _competition_team_models(db,provider,season):
- """Return teams eligible for long-term tournament picks.
-
- For SStats/UCL, a team is eligible only after UEFA standings enrichment assigned
- uefa_id. This excludes qualifying-round clubs that can exist in the SStats
- match feed but are not among the official league-phase participants.
- """
  matches=await _main_stage_matches(db,provider,season)
  ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
  if not ids:return []
- stmt=select(Team).where(Team.id.in_(ids))
- if provider=='sstats':stmt=stmt.where(Team.uefa_id.is_not(None))
- return (await db.execute(stmt.order_by(Team.name))).scalars().all()
+ teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
+ if provider!='sstats':return teams
+
+ # The authoritative participant list comes from UEFA standings. Do not depend on
+ # a previous enrichment run having already filled Team.uefa_id.
+ season_year=season+1 if season<2100 else season
+ try:uefa_teams=await UEFAProvider().competition_teams(1,season_year)
+ except Exception:return [t for t in teams if t.uefa_id is not None]
+ by_name={}
+ for u in uefa_teams:
+  for candidate in (u.international_name,u.name_ru,u.name):
+   key=_norm(candidate)
+   if key:by_name[key]=u
+ eligible=[];changed=False
+ for t in teams:
+  u=None
+  for candidate in (getattr(t,'source_name',None),t.name):
+   key=_norm(candidate)
+   if key and key in by_name:u=by_name[key];break
+  if not u:continue
+  eligible.append(t)
+  if t.uefa_id!=u.id:t.uefa_id=u.id;changed=True
+  if u.name_ru and t.name!=u.name_ru:t.name=u.name_ru;changed=True
+  if u.code and t.code!=str(u.code)[:20]:t.code=str(u.code)[:20];changed=True
+  logo=u.logo_medium_url or u.logo_url or u.logo_big_url or u.logo_small_url
+  if logo and t.logo_url!=logo:t.logo_url=logo;changed=True
+ if changed:await db.commit()
+ return eligible
 
 async def _competition_teams(db,provider,season):
  teams=await _competition_team_models(db,provider,season)
