@@ -3,128 +3,30 @@ from datetime import datetime
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-
-class Base(DeclarativeBase):
-    pass
-
+class Base(DeclarativeBase): pass
 
 class Tournament(Base):
-    __tablename__ = "tournaments"
-    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_tournaments_provider_external_id"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
-    provider_id: Mapped[int] = mapped_column(Integer, index=True)
-    name: Mapped[str] = mapped_column(String(150))
-    logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    country: Mapped[str | None] = mapped_column(String(100), nullable=True)
-
-
+    __tablename__="tournaments";__table_args__=(UniqueConstraint("provider","provider_id",name="uq_tournaments_provider_external_id"),)
+    id:Mapped[int]=mapped_column(primary_key=True);provider:Mapped[str]=mapped_column(String(32),default="api-football",index=True);provider_id:Mapped[int]=mapped_column(Integer,index=True);name:Mapped[str]=mapped_column(String(150));logo_url:Mapped[str|None]=mapped_column(String(500),nullable=True);country:Mapped[str|None]=mapped_column(String(100),nullable=True)
 class Team(Base):
-    __tablename__ = "teams"
-    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_teams_provider_external_id"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
-    provider_id: Mapped[int] = mapped_column(Integer, index=True)
-    name: Mapped[str] = mapped_column(String(150))
-    code: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    logo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-
-
+    __tablename__="teams";__table_args__=(UniqueConstraint("provider","provider_id",name="uq_teams_provider_external_id"),)
+    id:Mapped[int]=mapped_column(primary_key=True);provider:Mapped[str]=mapped_column(String(32),default="api-football",index=True);provider_id:Mapped[int]=mapped_column(Integer,index=True);name:Mapped[str]=mapped_column(String(150));code:Mapped[str|None]=mapped_column(String(20),nullable=True);logo_url:Mapped[str|None]=mapped_column(String(500),nullable=True)
 class Match(Base):
-    __tablename__ = "matches"
-    __table_args__ = (UniqueConstraint("provider", "provider_id", name="uq_matches_provider_external_id"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(32), default="api-football", index=True)
-    provider_id: Mapped[int] = mapped_column(BigInteger, index=True)
-    tournament_id: Mapped[int] = mapped_column(ForeignKey("tournaments.id"), index=True)
-    season: Mapped[int] = mapped_column(Integer, index=True)
-    round_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
-    kickoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
-    status_short: Mapped[str] = mapped_column(String(20), index=True)
-    status_long: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    elapsed: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    home_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
-    away_team_id: Mapped[int] = mapped_column(ForeignKey("teams.id"))
-    home_goals: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    away_goals: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    tournament: Mapped[Tournament] = relationship()
-    home_team: Mapped[Team] = relationship(foreign_keys=[home_team_id])
-    away_team: Mapped[Team] = relationship(foreign_keys=[away_team_id])
-
-
+    __tablename__="matches";__table_args__=(UniqueConstraint("provider","provider_id",name="uq_matches_provider_external_id"),)
+    id:Mapped[int]=mapped_column(primary_key=True);provider:Mapped[str]=mapped_column(String(32),default="api-football",index=True);provider_id:Mapped[int]=mapped_column(BigInteger,index=True);tournament_id:Mapped[int]=mapped_column(ForeignKey("tournaments.id"),index=True);season:Mapped[int]=mapped_column(Integer,index=True);round_name:Mapped[str|None]=mapped_column(String(150),nullable=True);kickoff_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),index=True);status_short:Mapped[str]=mapped_column(String(20),index=True);status_long:Mapped[str|None]=mapped_column(String(100),nullable=True);elapsed:Mapped[int|None]=mapped_column(Integer,nullable=True);home_team_id:Mapped[int]=mapped_column(ForeignKey("teams.id"));away_team_id:Mapped[int]=mapped_column(ForeignKey("teams.id"));home_goals:Mapped[int|None]=mapped_column(Integer,nullable=True);away_goals:Mapped[int|None]=mapped_column(Integer,nullable=True);updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,onupdate=datetime.utcnow)
+    tournament:Mapped[Tournament]=relationship();home_team:Mapped[Team]=relationship(foreign_keys=[home_team_id]);away_team:Mapped[Team]=relationship(foreign_keys=[away_team_id])
 class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    username: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    display_name: Mapped[str] = mapped_column(String(150))
-    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    role: Mapped[str] = mapped_column(String(32), default="user", index=True)
-    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
-    last_login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-
-
+    __tablename__="users";id:Mapped[int]=mapped_column(primary_key=True);telegram_id:Mapped[int]=mapped_column(BigInteger,unique=True,index=True);username:Mapped[str|None]=mapped_column(String(100),nullable=True);display_name:Mapped[str]=mapped_column(String(150));avatar_url:Mapped[str|None]=mapped_column(String(500),nullable=True);role:Mapped[str]=mapped_column(String(32),default="user",index=True);registered_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,index=True);last_login_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow)
 class Prediction(Base):
-    __tablename__ = "predictions"
-    __table_args__ = (UniqueConstraint("user_id", "match_id", name="uq_predictions_user_match"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), index=True)
-    home_score: Mapped[int] = mapped_column(Integer)
-    away_score: Mapped[int] = mapped_column(Integer)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    user: Mapped[User] = relationship()
-    match: Mapped[Match] = relationship()
-
-
+    __tablename__="predictions";__table_args__=(UniqueConstraint("user_id","match_id",name="uq_predictions_user_match"),)
+    id:Mapped[int]=mapped_column(primary_key=True);user_id:Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True);match_id:Mapped[int]=mapped_column(ForeignKey("matches.id",ondelete="CASCADE"),index=True);home_score:Mapped[int]=mapped_column(Integer);away_score:Mapped[int]=mapped_column(Integer);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow);updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,onupdate=datetime.utcnow);user:Mapped[User]=relationship();match:Mapped[Match]=relationship()
 class OraclePrediction(Base):
-    __tablename__ = "oracle_predictions"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), unique=True, index=True)
-    payload_json: Mapped[str] = mapped_column(Text)
-    source: Mapped[str] = mapped_column(String(32), default="openai-web", index=True)
-    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
-    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    match: Mapped[Match] = relationship()
-
-
+    __tablename__="oracle_predictions";id:Mapped[int]=mapped_column(primary_key=True);match_id:Mapped[int]=mapped_column(ForeignKey("matches.id",ondelete="CASCADE"),unique=True,index=True);payload_json:Mapped[str]=mapped_column(Text);source:Mapped[str]=mapped_column(String(32),default="openai-web",index=True);generated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,index=True);locked_at:Mapped[datetime|None]=mapped_column(DateTime(timezone=True),nullable=True,index=True);updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,onupdate=datetime.utcnow);match:Mapped[Match]=relationship()
+class TournamentPrediction(Base):
+    __tablename__="tournament_predictions";__table_args__=(UniqueConstraint("user_id","provider","season",name="uq_tournament_prediction_user_competition"),)
+    id:Mapped[int]=mapped_column(primary_key=True);user_id:Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True);provider:Mapped[str]=mapped_column(String(32),index=True);season:Mapped[int]=mapped_column(Integer,index=True);winner:Mapped[str]=mapped_column(String(150));second_place:Mapped[str]=mapped_column(String(150));third_place:Mapped[str]=mapped_column(String(150));top_scorer:Mapped[str]=mapped_column(String(150));top_assistant:Mapped[str]=mapped_column(String(150));best_player:Mapped[str]=mapped_column(String(150));deadline_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),index=True);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow);updated_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow,onupdate=datetime.utcnow);user:Mapped[User]=relationship()
 class UserLeague(Base):
-    __tablename__ = "user_leagues"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(120))
-    invite_code: Mapped[str] = mapped_column(String(12), unique=True, index=True)
-    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    tournament_provider: Mapped[str] = mapped_column(String(32), default="sstats")
-    tournament_season: Mapped[int] = mapped_column(Integer, default=2026, index=True)
-    is_private: Mapped[bool] = mapped_column(Boolean, default=True)
-    include_oracle: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-
-    owner: Mapped[User] = relationship()
-
-
+    __tablename__="user_leagues";id:Mapped[int]=mapped_column(primary_key=True);name:Mapped[str]=mapped_column(String(120));invite_code:Mapped[str]=mapped_column(String(12),unique=True,index=True);owner_user_id:Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True);tournament_provider:Mapped[str]=mapped_column(String(32),default="sstats");tournament_season:Mapped[int]=mapped_column(Integer,default=2026,index=True);is_private:Mapped[bool]=mapped_column(Boolean,default=True);include_oracle:Mapped[bool]=mapped_column(Boolean,default=True);created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow);owner:Mapped[User]=relationship()
 class LeagueMember(Base):
-    __tablename__ = "league_members"
-    __table_args__ = (UniqueConstraint("league_id", "user_id", name="uq_league_members_league_user"),)
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    role: Mapped[str] = mapped_column(String(32), default="member", index=True)
-    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
-
-    league: Mapped[UserLeague] = relationship()
-    user: Mapped[User] = relationship()
+    __tablename__="league_members";__table_args__=(UniqueConstraint("league_id","user_id",name="uq_league_members_league_user"),)
+    id:Mapped[int]=mapped_column(primary_key=True);league_id:Mapped[int]=mapped_column(ForeignKey("user_leagues.id",ondelete="CASCADE"),index=True);user_id:Mapped[int]=mapped_column(ForeignKey("users.id",ondelete="CASCADE"),index=True);role:Mapped[str]=mapped_column(String(32),default="member",index=True);joined_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow);league:Mapped[UserLeague]=relationship();user:Mapped[User]=relationship()
