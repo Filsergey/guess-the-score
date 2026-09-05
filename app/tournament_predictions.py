@@ -1,23 +1,32 @@
 from datetime import datetime, timezone
-from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
-from app.localization import normalize_team_name, team_name_ru
-from app.models import Match, Team, TournamentPrediction, User
-from app.providers.sstats import SStatsProvider
+from app.localization import team_name_ru
+from app.models import Match, Player, Team, TournamentPrediction, User
 
 router=APIRouter(prefix='/api/tournament-predictions',tags=['tournament-predictions'])
+
 class TournamentPredictionBody(BaseModel):
- winner:str=Field(min_length=1,max_length=150);second_place:str=Field(min_length=1,max_length=150);third_place:str=Field(min_length=1,max_length=150);top_scorer:str=Field(min_length=1,max_length=150);top_assistant:str=Field(min_length=1,max_length=150);best_player:str=Field(min_length=1,max_length=150)
+ winner:str=Field(min_length=1,max_length=150)
+ second_place:str=Field(min_length=1,max_length=150)
+ third_place:str=Field(min_length=1,max_length=150)
+ top_scorer:str=Field(min_length=1,max_length=150)
+ top_assistant:str=Field(min_length=1,max_length=150)
+ best_player:str=Field(min_length=1,max_length=150)
+ top_scorer_player_id:int|None=None
+ top_assistant_player_id:int|None=None
+ best_player_player_id:int|None=None
+
 async def _main_stage_matches(db,provider,season):
  matches=(await db.execute(select(Match).where(Match.provider==provider,Match.season==season).order_by(Match.kickoff_at))).scalars().all()
  if provider=='sstats' and season==2026:return [m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None]
  return matches
+
 async def _deadline(db,provider,season):
  matches=await _main_stage_matches(db,provider,season)
  if not matches:raise HTTPException(404,'Tournament matches not found')
@@ -25,47 +34,52 @@ async def _deadline(db,provider,season):
   md1=[m.kickoff_at for m in matches if (classify_ucl_round(season,m.kickoff_at) or {}).get('stage')=='league_phase' and (classify_ucl_round(season,m.kickoff_at) or {}).get('matchday')==1]
   if md1:return min(md1)
  return matches[0].kickoff_at
-def _out(p,deadline):
- now=datetime.now(timezone.utc);return {'provider':p.provider if p else None,'season':p.season if p else None,'deadline_at':deadline,'locked':now>=deadline,'prediction':None if not p else {'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'created_at':p.created_at,'updated_at':p.updated_at}}
+
+def _player_out(player:Player|None):
+ if not player:return None
+ return {'id':player.id,'uefa_id':player.provider_id if player.provider=='uefa' else None,'name':player.display_name or player.name,'team':team_name_ru(player.team_name) if player.team_name else None,'team_original':player.team_name,'position':player.position,'number':player.shirt_number,'nationality':player.nationality,'photo':f'/api/players/{player.id}/photo' if (player.photo_data or player.photo_source_url) else None}
+
+async def _out(db,p,deadline):
+ now=datetime.now(timezone.utc)
+ result={'provider':p.provider if p else None,'season':p.season if p else None,'deadline_at':deadline,'locked':now>=deadline,'prediction':None}
+ if not p:return result
+ ids=[x for x in (p.top_scorer_player_id,p.top_assistant_player_id,p.best_player_player_id) if x]
+ players=(await db.execute(select(Player).where(Player.id.in_(ids)))).scalars().all() if ids else []
+ by_id={x.id:x for x in players}
+ result['prediction']={'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(by_id.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(by_id.get(p.top_assistant_player_id)),'best_player_player':_player_out(by_id.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
+ return result
+
 async def _competition_teams(db,provider,season):
  matches=await _main_stage_matches(db,provider,season);ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
  if not ids:return []
  teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
  return [{'id':t.id,'provider_id':t.provider_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
-def _player_rows(payload):
- data=payload.get('data') or payload.get('response') or []
- if isinstance(data,dict):data=[data]
- out=[];seen=set()
- for x in data if isinstance(data,list) else []:
-  if not isinstance(x,dict):continue
-  pid=x.get('id',x.get('Id',x.get('playerId',x.get('PlayerId'))));name=x.get('name',x.get('Name',x.get('playerName',x.get('PlayerName',x.get('fullName',x.get('FullName'))))))
-  if not name:continue
-  key=(str(pid),str(name).lower())
-  if key in seen:continue
-  seen.add(key)
-  team=x.get('teamName',x.get('TeamName'));position=x.get('position',x.get('Position',x.get('positionName',x.get('PositionName'))));raw_photo=x.get('photo',x.get('Photo',x.get('image',x.get('Image'))))
-  photo=f'/api/player-photo?src={quote(str(raw_photo),safe="")}' if isinstance(raw_photo,str) and raw_photo.startswith('https://') else None
-  out.append({'id':pid,'name':str(name),'team_original':team,'team':team_name_ru(team),'position':position,'photo':photo})
- return out[:30]
+
 @router.get('/options/teams')
 async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ del user
  items=await _competition_teams(db,provider,season);items.sort(key=lambda x:x['display_name']);return {'count':len(items),'response':items}
+
 @router.get('/options/players')
 async def player_options(q:str|None=Query(default=None,max_length=80),provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- p=SStatsProvider();payload={}
- try:
-  if q and len(q.strip())>=2:payload=await p.find_players(q.strip())
-  else:payload=await p.get_players(LeagueId=2,Year=season,Limit=30)
- except Exception:
-  if q and len(q.strip())>=2:
-   try:payload=await p.get_players(Name=q.strip())
-   except Exception as e:raise HTTPException(502,f'Player search is temporarily unavailable: {type(e).__name__}')
- items=_player_rows(payload);teams=await _competition_teams(db,provider,season);logos={normalize_team_name(x['name']):x['logo'] for x in teams}
- for item in items:item['team_logo']=logos.get(normalize_team_name(item.get('team_original')))
- return {'count':len(items),'response':items}
+ del user,provider,season
+ stmt=select(Player).where(Player.provider=='uefa',Player.is_active.is_(True))
+ if q and q.strip():
+  like=f"%{q.strip()}%";stmt=stmt.where(or_(Player.name.ilike(like),Player.display_name.ilike(like),Player.team_name.ilike(like)))
+ stmt=stmt.order_by(Player.is_popular.desc(),Player.name).limit(40)
+ rows=(await db.execute(stmt)).scalars().all()
+ return {'count':len(rows),'response':[_player_out(x) for x in rows]}
+
 @router.get('/mine')
 async def mine(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- deadline=await _deadline(db,provider,season);p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season));r=_out(p,deadline);r['provider']=provider;r['season']=season;return r
+ deadline=await _deadline(db,provider,season);p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season));r=await _out(db,p,deadline);r['provider']=provider;r['season']=season;return r
+
+async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str)->Player:
+ if not player_id:raise HTTPException(422,f'Выбери игрока «{submitted_name}» из списка')
+ player=await db.get(Player,player_id)
+ if not player or player.provider!='uefa' or not player.is_active:raise HTTPException(422,'Выбранный игрок отсутствует в актуальном каталоге UEFA')
+ return player
+
 @router.put('/mine')
 async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  deadline=await _deadline(db,provider,season);now=datetime.now(timezone.utc)
@@ -76,9 +90,14 @@ async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=20
   if canonical is None:raise HTTPException(422,f'{values[k]} is not a team in this tournament')
   values[k]=canonical
  if len({values['winner'].casefold(),values['second_place'].casefold(),values['third_place'].casefold()})<3:raise HTTPException(422,'Winner, second and third place must be different teams')
+ scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer)
+ assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant)
+ best=await _canonical_player(db,body.best_player_player_id,body.best_player)
+ values['top_scorer']=scorer.name;values['top_assistant']=assistant.name;values['best_player']=best.name
+ player_ids={'top_scorer_player_id':scorer.id,'top_assistant_player_id':assistant.id,'best_player_player_id':best.id}
  p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season))
- if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,deadline_at=deadline,**values);db.add(p)
+ if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,deadline_at=deadline,**values,**player_ids);db.add(p)
  else:
-  for k,v in values.items():setattr(p,k,v)
+  for k,v in {**values,**player_ids}.items():setattr(p,k,v)
   p.deadline_at=deadline;p.updated_at=now
- await db.commit();await db.refresh(p);return _out(p,deadline)
+ await db.commit();await db.refresh(p);return await _out(db,p,deadline)
