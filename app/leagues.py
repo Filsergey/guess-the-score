@@ -1,3 +1,4 @@
+import json
 import secrets
 import string
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
-from app.models import LeagueMember, Match, Prediction, User, UserLeague
+from app.models import LeagueMember, Match, OraclePrediction, Prediction, User, UserLeague
 from app.predictions import prediction_points
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
@@ -35,6 +36,11 @@ async def _membership(league_id,user,db):
     m=await db.scalar(select(LeagueMember).where(LeagueMember.league_id==league_id,LeagueMember.user_id==user.id))
     if m is None and user.role!="superadmin": raise HTTPException(403,"You are not a member of this league")
     return m
+
+def _score_points(ph,pa,ah,aa):
+    if ph==ah and pa==aa:return 3
+    predicted=(ph>pa)-(ph<pa);actual=(ah>aa)-(ah<aa)
+    return 1 if predicted==actual else 0
 
 @router.get('/mine')
 async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
@@ -76,7 +82,22 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
         correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
-        result.append({'user_id':u.id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'member_role':member.role,'registered_at':u.registered_at,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy})
+        result.append({'user_id':u.id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'member_role':member.role,'registered_at':u.registered_at,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'is_oracle':False})
+    if league.include_oracle:
+        oracle_rows=(await db.execute(select(OraclePrediction,Match).join(Match,OraclePrediction.match_id==Match.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season))).all()
+        points=outcomes=exacts=submitted=0
+        for op,m in oracle_rows:
+            if m.home_goals is None or m.away_goals is None:continue
+            # Only predictions generated before kickoff are eligible. This prevents post-match generation from scoring.
+            if op.generated_at is None or op.generated_at>=m.kickoff_at:continue
+            try:
+                data=json.loads(op.payload_json);ph=int(data['home_score']);pa=int(data['away_score'])
+            except (ValueError,TypeError,KeyError,json.JSONDecodeError):continue
+            submitted+=1;pts=_score_points(ph,pa,m.home_goals,m.away_goals);points+=pts
+            if pts==3:exacts+=1
+            elif pts==1:outcomes+=1
+        correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
+        result.append({'user_id':None,'display_name':'Оракул','username':None,'avatar_url':None,'member_role':'oracle','registered_at':None,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'is_oracle':True})
     result.sort(key=lambda x:(-x['points'],-x['exacts'],-x['outcomes'],x['display_name'].lower()))
     for i,row in enumerate(result,1):row['place']=i
-    return {'league':serialize_league(league,membership.role if membership else 'superadmin',len(result)),'count':len(result),'response':result}
+    return {'league':serialize_league(league,membership.role if membership else 'superadmin',len(members)),'count':len(result),'response':result}
