@@ -46,10 +46,23 @@ async def _out(db,p,deadline):
  result['prediction']={'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(by_id.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(by_id.get(p.top_assistant_player_id)),'best_player_player':_player_out(by_id.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
  return result
 
-async def _competition_teams(db,provider,season):
- matches=await _main_stage_matches(db,provider,season);ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
+async def _competition_team_models(db,provider,season):
+ """Return teams eligible for long-term tournament picks.
+
+ For SStats/UCL, a team is eligible only after UEFA standings enrichment assigned
+ uefa_id. This excludes qualifying-round clubs that can exist in the SStats
+ match feed but are not among the official league-phase participants.
+ """
+ matches=await _main_stage_matches(db,provider,season)
+ ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
  if not ids:return []
- teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all();return [{'id':t.id,'provider_id':t.provider_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
+ stmt=select(Team).where(Team.id.in_(ids))
+ if provider=='sstats':stmt=stmt.where(Team.uefa_id.is_not(None))
+ return (await db.execute(stmt.order_by(Team.name))).scalars().all()
+
+async def _competition_teams(db,provider,season):
+ teams=await _competition_team_models(db,provider,season)
+ return [{'id':t.id,'provider_id':t.provider_id,'uefa_id':t.uefa_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
 
 @router.get('/options/teams')
 async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
@@ -57,8 +70,12 @@ async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(g
 
 @router.get('/options/players')
 async def player_options(q:str|None=Query(default=None,max_length=80),provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- del user,provider,season
+ del user
+ teams=await _competition_team_models(db,provider,season)
+ team_provider_ids={t.provider_id for t in teams if t.provider=='sstats'}
  stmt=select(Player).where(Player.provider=='sstats',Player.is_active.is_(True))
+ if team_provider_ids:stmt=stmt.where(Player.team_provider_id.in_(team_provider_ids))
+ else:stmt=stmt.where(False)
  if q and q.strip():
   like=f"%{q.strip()}%";stmt=stmt.where(or_(Player.name.ilike(like),Player.display_name.ilike(like),Player.team_name.ilike(like)))
  stmt=stmt.order_by(Player.is_popular.desc(),Player.name).limit(40);rows=(await db.execute(stmt)).scalars().all();return {'count':len(rows),'response':[_player_out(x) for x in rows]}
@@ -67,10 +84,12 @@ async def player_options(q:str|None=Query(default=None,max_length=80),provider:s
 async def mine(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  deadline=await _deadline(db,provider,season);p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season));r=await _out(db,p,deadline);r['provider']=provider;r['season']=season;return r
 
-async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str)->Player:
+async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str,provider:str,season:int)->Player:
  if not player_id:raise HTTPException(422,f'Выбери игрока «{submitted_name}» из списка')
  player=await db.get(Player,player_id)
  if not player or player.provider!='sstats' or not player.is_active:raise HTTPException(422,'Выбранный игрок отсутствует в актуальном каталоге SStats')
+ teams=await _competition_team_models(db,provider,season);allowed_team_ids={t.provider_id for t in teams if t.provider=='sstats'}
+ if player.team_provider_id not in allowed_team_ids:raise HTTPException(422,'Выбранный игрок не участвует в этом турнире')
  return player
 
 @router.put('/mine')
@@ -83,7 +102,7 @@ async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=20
   if canonical is None:raise HTTPException(422,f'{values[k]} is not a team in this tournament')
   values[k]=canonical
  if len({values['winner'].casefold(),values['second_place'].casefold(),values['third_place'].casefold()})<3:raise HTTPException(422,'Winner, second and third place must be different teams')
- scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer);assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant);best=await _canonical_player(db,body.best_player_player_id,body.best_player)
+ scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer,provider,season);assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant,provider,season);best=await _canonical_player(db,body.best_player_player_id,body.best_player,provider,season)
  values['top_scorer']=scorer.name;values['top_assistant']=assistant.name;values['best_player']=best.name;player_ids={'top_scorer_player_id':scorer.id,'top_assistant_player_id':assistant.id,'best_player_player_id':best.id}
  p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season))
  if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,deadline_at=deadline,**values,**player_ids);db.add(p)
