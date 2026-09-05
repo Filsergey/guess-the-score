@@ -33,10 +33,10 @@ async def lifespan(_:FastAPI):
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.12.0',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.12.1',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');return HTMLResponse(html.replace('</body>','<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=1"></script></body>'))
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');return HTMLResponse(html.replace('</body>','<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=2"></script></body>'))
 def require_admin_token(x_admin_token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if x_admin_token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
