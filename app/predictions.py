@@ -11,6 +11,8 @@ from app.models import Match, Prediction, User
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
+FINAL_MATCH_STATUSES = frozenset({"FT", "AET", "PEN", "AWD", "WO"})
+
 
 class PredictionInput(BaseModel):
     home_score: int = Field(ge=0, le=30)
@@ -21,8 +23,14 @@ def _outcome(home: int, away: int) -> int:
     return 1 if home > away else -1 if home < away else 0
 
 
+def match_is_final(match: Match) -> bool:
+    return (match.status_short or "").upper() in FINAL_MATCH_STATUSES
+
+
 def prediction_points(prediction: Prediction, match: Match) -> int | None:
-    if match.home_goals is None or match.away_goals is None:
+    # Live/half-time scores must never award provisional points. A prediction is
+    # scored only after SStats marks the match as a terminal result.
+    if not match_is_final(match) or match.home_goals is None or match.away_goals is None:
         return None
     if prediction.home_score == match.home_goals and prediction.away_score == match.away_goals:
         return 3
