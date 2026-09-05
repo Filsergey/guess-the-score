@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -41,7 +42,10 @@ def _player_rows(payload):
   if not name:continue
   key=(str(pid),str(name).lower())
   if key in seen:continue
-  seen.add(key);team=x.get('teamName',x.get('TeamName'));position=x.get('position',x.get('Position',x.get('positionName',x.get('PositionName'))));out.append({'id':pid,'name':str(name),'team_original':team,'team':team_name_ru(team),'position':position,'photo':x.get('photo',x.get('Photo',x.get('image',x.get('Image'))))})
+  seen.add(key)
+  team=x.get('teamName',x.get('TeamName'));position=x.get('position',x.get('Position',x.get('positionName',x.get('PositionName'))));raw_photo=x.get('photo',x.get('Photo',x.get('image',x.get('Image'))))
+  photo=f'/api/player-photo?src={quote(str(raw_photo),safe="")}' if isinstance(raw_photo,str) and raw_photo.startswith('https://') else None
+  out.append({'id':pid,'name':str(name),'team_original':team,'team':team_name_ru(team),'position':position,'photo':photo})
  return out[:30]
 @router.get('/options/teams')
 async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
