@@ -48,141 +48,130 @@ class SStatsProvider:
         containers = []
         for key in ("seasons", "Seasons", "season", "Season"):
             value = row.get(key)
-            if isinstance(value, list):
-                containers.extend(x for x in value if isinstance(x, dict))
-            elif isinstance(value, dict):
-                containers.append(value)
+            if isinstance(value, list): containers.extend(x for x in value if isinstance(x, dict))
+            elif isinstance(value, dict): containers.append(value)
         for season in containers:
             season_year = cls._value(season, "year", "Year", "seasonYear", "SeasonYear")
             if season_year is not None:
                 try:
-                    if int(season_year) != int(year):
-                        continue
-                except (TypeError, ValueError):
-                    continue
+                    if int(season_year) != int(year): continue
+                except (TypeError, ValueError): continue
             uid = cls._value(season, "uid", "Uid", "UID", "seasonUid", "SeasonUid", "id", "Id")
-            if uid:
-                return {"uid": str(uid), "year": int(year), "raw": season}
+            if uid: return {"uid": str(uid), "year": int(year), "raw": season}
         return None
+
+    @classmethod
+    def _normalize_game(cls, row: dict) -> dict:
+        """Adapt the documented ApiSaGame shape to the flat fields used by our DB sync.
+
+        Games/list returns homeTeam/awayTeam/season as nested objects and score fields
+        as homeResult/awayResult. Games/query used to return flat HomeTeamId etc.
+        Keeping the adapter here lets the rest of the application consume one shape.
+        """
+        if not isinstance(row, dict): return row
+        out = dict(row)
+        home = cls._value(row, "homeTeam", "HomeTeam") or {}
+        away = cls._value(row, "awayTeam", "AwayTeam") or {}
+        season = cls._value(row, "season", "Season") or {}
+        league = cls._value(season, "league", "League") or {}
+        if isinstance(home, dict):
+            out.setdefault("homeTeamId", cls._value(home, "id", "Id"))
+            out.setdefault("homeTeamName", cls._value(home, "name", "Name"))
+        if isinstance(away, dict):
+            out.setdefault("awayTeamId", cls._value(away, "id", "Id"))
+            out.setdefault("awayTeamName", cls._value(away, "name", "Name"))
+        if isinstance(season, dict):
+            out.setdefault("seasonUid", cls._value(season, "uid", "Uid"))
+            out.setdefault("year", cls._value(season, "year", "Year"))
+        if isinstance(league, dict):
+            out.setdefault("leagueId", cls._value(league, "id", "Id"))
+            out.setdefault("leagueName", cls._value(league, "name", "Name"))
+            country = cls._value(league, "country", "Country") or {}
+            if isinstance(country, dict): out.setdefault("countryName", cls._value(country, "name", "Name"))
+        # ApiSaGame names: result = score including extra time, FT = regulation score.
+        out.setdefault("scoreHome", cls._value(row, "homeResult", "HomeResult"))
+        out.setdefault("scoreAway", cls._value(row, "awayResult", "AwayResult"))
+        out.setdefault("scoreHomeFT", cls._value(row, "homeFTResult", "HomeFTResult"))
+        out.setdefault("scoreAwayFT", cls._value(row, "awayFTResult", "AwayFTResult"))
+        out.setdefault("scoreHomeHT", cls._value(row, "homeHTResult", "HomeHTResult"))
+        out.setdefault("scoreAwayHT", cls._value(row, "awayHTResult", "AwayHTResult"))
+        return out
 
     async def get_leagues(self) -> dict:
         return await self._get("Leagues")
 
     async def resolve_season_uid(self, league_id: int, year: int) -> dict | None:
-        """Resolve a stable SStats SeasonUid from /Leagues for a league/year pair."""
-        payload = await self.get_leagues()
-        rows = payload.get("data") or payload.get("response") or []
-        if isinstance(rows, dict):
-            rows = [rows]
-        if not isinstance(rows, list):
-            return None
+        payload = await self.get_leagues(); rows = payload.get("data") or payload.get("response") or []
+        if isinstance(rows, dict): rows = [rows]
+        if not isinstance(rows, list): return None
         for row in rows:
-            if not isinstance(row, dict):
-                continue
+            if not isinstance(row, dict): continue
             raw_id = self._value(row, "id", "Id", "leagueId", "LeagueId")
-            try:
-                same_league = raw_id is not None and int(raw_id) == int(league_id)
-            except (TypeError, ValueError):
-                same_league = False
-            if not same_league:
-                continue
+            try: same_league = raw_id is not None and int(raw_id) == int(league_id)
+            except (TypeError, ValueError): same_league = False
+            if not same_league: continue
             season = self._season_from_league_row(row, year)
             if season:
-                season["league_id"] = int(league_id)
-                season["league_name"] = self._value(row, "name", "Name", "leagueName", "LeagueName")
+                season["league_id"] = int(league_id); season["league_name"] = self._value(row, "name", "Name", "leagueName", "LeagueName")
                 return season
         return None
 
-    async def get_games(
-        self,
-        league_id: int | None = None,
-        year: int | None = None,
-        season_uid: str | None = None,
-        offset: int = 0,
-        limit: int = 1000,
-        live: bool | None = None,
-        upcoming: bool | None = None,
-        ended: bool | None = None,
-    ) -> dict:
-        params: dict[str, object] = {"Offset": offset, "Limit": limit}
-        if league_id is not None: params["LeagueId"] = league_id
-        if year is not None: params["Year"] = year
-        if season_uid: params["SeasonUid"] = season_uid
-        if live is not None: params["Live"] = live
-        if upcoming is not None: params["Upcoming"] = upcoming
-        if ended is not None: params["Ended"] = ended
-        return await self._get("Games/list", params)
+    async def get_games(self, league_id:int|None=None, year:int|None=None, season_uid:str|None=None, offset:int=0, limit:int=1000, live:bool|None=None, upcoming:bool|None=None, ended:bool|None=None) -> dict:
+        params:dict[str,object]={"Offset":offset,"Limit":limit}
+        if league_id is not None:params["LeagueId"]=league_id
+        if year is not None:params["Year"]=year
+        if season_uid:params["SeasonUid"]=season_uid
+        if live is not None:params["Live"]=live
+        if upcoming is not None:params["Upcoming"]=upcoming
+        if ended is not None:params["Ended"]=ended
+        return await self._get("Games/list",params)
 
-    async def get_all_games(self, league_id: int | None = None, year: int | None = None, season_uid: str | None = None) -> dict:
-        offset = 0
-        limit = 1000
-        rows: list[dict] = []
-        first_payload: dict = {}
+    async def get_all_games(self, league_id:int|None=None, year:int|None=None, season_uid:str|None=None)->dict:
+        offset=0;limit=1000;rows=[];first_payload={}
         while True:
-            payload = await self.get_games(league_id=league_id, year=year, season_uid=season_uid, offset=offset, limit=limit)
-            if not first_payload: first_payload = payload
-            page = payload.get("data") or payload.get("response") or []
-            if not isinstance(page, list): page = []
-            rows.extend(page)
-            total = payload.get("TotalCount") or payload.get("totalCount") or payload.get("count")
-            if not page or len(page) < limit or (total is not None and len(rows) >= int(total)): break
-            offset += len(page)
-        result = dict(first_payload)
-        result["data"] = rows
-        result["count"] = len(rows)
-        result["offset"] = 0
+            payload=await self.get_games(league_id=league_id,year=year,season_uid=season_uid,offset=offset,limit=limit)
+            if not first_payload:first_payload=payload
+            page=payload.get("data") or payload.get("response") or []
+            if not isinstance(page,list):page=[]
+            rows.extend(self._normalize_game(x) for x in page)
+            total=payload.get("TotalCount") or payload.get("totalCount") or payload.get("count")
+            if not page or len(page)<limit or (total is not None and len(rows)>=int(total)):break
+            offset+=len(page)
+        result=dict(first_payload);result["data"]=rows;result["count"]=len(rows);result["offset"]=0
         return result
 
-    async def competition_games(self, league_id: int, year: int) -> tuple[dict, dict]:
-        """Prefer stable SeasonUid, with league/year fallback for older SStats payloads."""
-        season = await self.resolve_season_uid(league_id, year)
+    async def competition_games(self,league_id:int,year:int)->tuple[dict,dict]:
+        season=await self.resolve_season_uid(league_id,year)
         if season and season.get("uid"):
-            payload = await self.get_all_games(season_uid=season["uid"])
-            return payload, {"mode": "season_uid", **season}
-        payload = await self.get_all_games(league_id=league_id, year=year)
-        return payload, {"mode": "league_year", "league_id": league_id, "year": year, "uid": None}
+            payload=await self.get_all_games(season_uid=season["uid"]);return payload,{"mode":"season_uid",**season}
+        payload=await self.get_all_games(league_id=league_id,year=year);return payload,{"mode":"league_year","league_id":league_id,"year":year,"uid":None}
 
-    async def query_games(self, league_id: int, year: int) -> dict:
-        payload, _ = await self.competition_games(league_id, year)
-        return payload
+    async def query_games(self,league_id:int,year:int)->dict:
+        payload,_=await self.competition_games(league_id,year);return payload
 
-    async def query_game_details(self, game_id: int) -> dict:
-        fields = ["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
-        return await self._post("Games/query", {"Condition": f"Id = {game_id}", "Fields": fields, "Limit": 1, "Format": "json", "Timezone": 0})
+    async def query_game_details(self,game_id:int)->dict:
+        fields=["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
+        return await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0})
 
-    async def get_game(self, game_id: int) -> dict:
-        return await self._get(f"Games/{game_id}")
-
-    async def get_glicko(self, game_id: int) -> dict:
-        return await self._get(f"Games/glicko/{game_id}")
-
-    async def get_standings(self, league_id: int | None = None, year: int | None = None, season_uid: str | None = None) -> dict:
-        params: dict[str, object] = {}
-        if season_uid: params["uid"] = season_uid
+    async def get_game(self,game_id:int)->dict:return await self._get(f"Games/{game_id}")
+    async def get_glicko(self,game_id:int)->dict:return await self._get(f"Games/glicko/{game_id}")
+    async def get_standings(self,league_id:int|None=None,year:int|None=None,season_uid:str|None=None)->dict:
+        params={}
+        if season_uid:params["uid"]=season_uid
         else:
-            if league_id is not None: params["leagueId"] = league_id
-            if year is not None: params["year"] = year
-        return await self._get("Seasons/standings", params)
-
-    async def get_teams(self, name: str | None = None, country: str | None = None, offset: int = 0, limit: int = 1000) -> dict:
-        params = {"Offset": offset, "Limit": limit}
-        if name: params["Name"] = name
-        if country: params["Country"] = country
-        return await self._get("Teams/list", params)
-
-    async def get_team(self, team_id: int) -> dict:
-        return await self._get(f"Teams/{team_id}")
-
-    async def find_players(self, name: str) -> dict:
-        return await self._get("Players/find", {"name": name})
-
-    async def get_players(self, team_id: int | None = None, offset: int = 0, limit: int = 1000) -> dict:
-        params = {"Offset": offset, "Limit": limit}
-        if team_id is not None: params["teamId"] = team_id
-        return await self._get("Players/list", params)
-
-    async def get_player(self, player_id: int) -> dict:
-        return await self._get(f"Players/{player_id}")
-
-    async def get_player_events(self, player_id: int, include_assists: bool = True) -> dict:
-        return await self._get(f"Players/{player_id}/events", {"includeAssists": include_assists})
+            if league_id is not None:params["leagueId"]=league_id
+            if year is not None:params["year"]=year
+        return await self._get("Seasons/standings",params)
+    async def get_teams(self,name:str|None=None,country:str|None=None,offset:int=0,limit:int=1000)->dict:
+        params={"Offset":offset,"Limit":limit}
+        if name:params["Name"]=name
+        if country:params["Country"]=country
+        return await self._get("Teams/list",params)
+    async def get_team(self,team_id:int)->dict:return await self._get(f"Teams/{team_id}")
+    async def find_players(self,name:str)->dict:return await self._get("Players/find",{"name":name})
+    async def get_players(self,team_id:int|None=None,offset:int=0,limit:int=1000)->dict:
+        params={"Offset":offset,"Limit":limit}
+        if team_id is not None:params["teamId"]=team_id
+        return await self._get("Players/list",params)
+    async def get_player(self,player_id:int)->dict:return await self._get(f"Players/{player_id}")
+    async def get_player_events(self,player_id:int,include_assists:bool=True)->dict:return await self._get(f"Players/{player_id}/events",{"includeAssists":include_assists})
