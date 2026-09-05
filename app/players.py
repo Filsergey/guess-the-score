@@ -66,18 +66,19 @@ async def sync_team_players(db: AsyncSession, team_name: str, team_id: int, down
     actual_team_name = api_team.get('name') or team_name
     rows = root.get('players') or []
     if not isinstance(rows, list): rows = []
+    valid_rows = [r for r in rows if isinstance(r, dict) and r.get('id') and r.get('name')]
+    provider_ids = [int(r['id']) for r in valid_rows]
+    existing_rows = (await db.execute(select(Player).where(Player.provider=='api-football', Player.provider_id.in_(provider_ids)))).scalars().all() if provider_ids else []
+    existing = {p.provider_id:p for p in existing_rows}
     saved = photos = 0
     async with httpx.AsyncClient(timeout=8.0, follow_redirects=True, limits=httpx.Limits(max_connections=8)) as client:
         sem = asyncio.Semaphore(6)
         async def photo_task(row):
             async with sem:
                 return await _download_photo(client, row.get('photo')) if download_photos else (None,None)
-        photo_results = await asyncio.gather(*(photo_task(r) for r in rows)) if rows else []
-    existing = {p.provider_id:p for p in (await db.execute(select(Player).where(Player.provider=='api-football', Player.team_provider_id==team_id))).scalars().all()}
+        photo_results = await asyncio.gather(*(photo_task(r) for r in valid_rows)) if valid_rows else []
     now = datetime.now(timezone.utc)
-    for idx, row in enumerate(rows):
-        if not isinstance(row, dict) or not row.get('id') or not row.get('name'):
-            continue
+    for idx, row in enumerate(valid_rows):
         pid = int(row['id']); p = existing.get(pid)
         if not p:
             p = Player(provider='api-football', provider_id=pid, name=str(row['name']))
@@ -91,7 +92,7 @@ async def sync_team_players(db: AsyncSession, team_name: str, team_id: int, down
                 p.photo_data = data; p.photo_media_type = ctype; photos += 1
         saved += 1
     await db.commit()
-    return {'team':actual_team_name,'team_id':team_id,'received':len(rows),'saved':saved,'photos':photos}
+    return {'team':actual_team_name,'team_id':team_id,'received':len(valid_rows),'saved':saved,'photos':photos}
 
 
 @router.get('/api/players')
@@ -153,15 +154,11 @@ async def sync_players_catalog(
 
 
 async def bootstrap_popular_players() -> None:
-    """Best-effort one-time warmup for clubs used by the popular picker.
-
-    It only runs when there are no player rows yet, so deploys do not repeatedly
-    consume the provider quota. The admin sync endpoint can then fill the rest.
-    """
-    from app.database import async_session
+    """Warm the local DB once with the clubs most likely to be selected first."""
+    from app.database import SessionLocal
     priority = [('Barcelona',529),('Real Madrid',541),('Bayern Munich',157),('Manchester City',50)]
     try:
-        async with async_session() as db:
+        async with SessionLocal() as db:
             count = (await db.execute(select(func.count(Player.id)))).scalar_one()
             if count:
                 return
