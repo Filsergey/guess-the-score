@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.models import Player, Team, User
 from app.providers.sstats import SStatsProvider
+from app.tournament_predictions import _competition_team_models
 
 router = APIRouter(tags=["players"])
 settings = get_settings()
@@ -118,6 +119,22 @@ async def list_players(q:str|None=Query(default=None,max_length=100),popular:boo
 @router.get("/api/players/catalog-status",include_in_schema=False)
 async def player_catalog_status(db:AsyncSession=Depends(get_db)):
     total=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats"))).scalar_one();active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True)))).scalar_one();with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_source_url.is_not(None)))).scalar_one();with_blob=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_data.is_not(None)))).scalar_one();return {"provider":"sstats","total":total,"active":active,"with_photo_source":with_source,"with_photo_blob":with_blob}
+
+@router.get("/api/players/ucl-status",include_in_schema=False)
+async def ucl_player_catalog_status(season:int=Query(default=2026,ge=2020,le=2100),db:AsyncSession=Depends(get_db)):
+    teams=await _competition_team_models(db,"sstats",season)
+    team_ids={t.provider_id for t in teams if t.provider=="sstats" and t.provider_id is not None}
+    players=(await db.execute(select(Player).where(Player.provider=="sstats",Player.is_active.is_(True),Player.team_provider_id.in_(team_ids)))).scalars().all() if team_ids else []
+    by_team={tid:[] for tid in team_ids}
+    for player in players:
+        by_team.setdefault(player.team_provider_id,[]).append(player)
+    rows=[]
+    for team in sorted(teams,key=lambda t:(t.name or "").casefold()):
+        team_players=by_team.get(team.provider_id,[])
+        with_photo=sum(1 for p in team_players if p.photo_source_url or p.photo_data)
+        rows.append({"team_id":team.provider_id,"uefa_id":team.uefa_id,"team":team.name,"players":len(team_players),"with_photo":with_photo,"without_photo":len(team_players)-with_photo})
+    with_photo=sum(1 for p in players if p.photo_source_url or p.photo_data)
+    return {"competition":"UEFA Champions League","provider":"sstats","season":season,"teams":len(teams),"players_total":len(players),"players_with_photo":with_photo,"players_without_photo":len(players)-with_photo,"teams_without_players":[r["team"] for r in rows if r["players"]==0],"by_team":rows}
 
 @router.get("/api/players/{player_id}/photo",include_in_schema=False)
 async def player_photo(player_id:int,db:AsyncSession=Depends(get_db)):
