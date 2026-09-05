@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import re
 
 from sqlalchemy import select
@@ -13,6 +13,27 @@ from app.providers.uefa import UEFAProvider
 SSTATS_PROVIDER = "sstats"
 CHAMPIONS_LEAGUE_ID = 2
 UEFA_CHAMPIONS_LEAGUE_ID = 1
+
+SSTATS_STATUSES = {
+    1: ("TBD", "Date/time to be defined"),
+    2: ("NS", "Not started"),
+    3: ("1H", "First half"),
+    4: ("HT", "Half-time"),
+    5: ("2H", "Second half"),
+    6: ("ET", "Extra time"),
+    7: ("PEN_LIVE", "Penalties in progress"),
+    8: ("FT", "Full-time"),
+    9: ("AET", "After extra time"),
+    10: ("PEN", "Finished after penalties"),
+    11: ("ET_BREAK", "Extra-time break"),
+    12: ("SUSP", "Suspended"),
+    13: ("ABD", "Abandoned"),
+    14: ("PST", "Postponed"),
+    15: ("CANC", "Cancelled"),
+    17: ("AWD", "Technical loss"),
+    18: ("WO", "Walkover"),
+    19: ("LIVE", "In progress"),
+}
 
 
 def _pick(data: dict, *names: str, default=None):
@@ -29,18 +50,19 @@ def _parse_datetime(value) -> datetime:
     return result
 
 
-def _normalize_status(raw_status, kickoff_at: datetime, home_goals, away_goals) -> tuple[str, str | None]:
-    now = datetime.now(timezone.utc)
+def _normalize_status(raw_status, raw_status_name=None) -> tuple[str, str | None]:
+    """Map the documented SStats status code instead of guessing from kickoff time/score."""
+    try:
+        code = int(raw_status) if raw_status is not None else None
+    except (TypeError, ValueError):
+        code = None
+    mapped = SSTATS_STATUSES.get(code)
+    provider_name = str(raw_status_name).strip() if raw_status_name not in (None, "") else None
+    if mapped:
+        short, fallback_name = mapped
+        return short, provider_name or fallback_name
     raw_text = None if raw_status is None else str(raw_status)
-    status_long = f"SStats status {raw_text}" if raw_status is not None else None
-    if kickoff_at > now:
-        return "NS", status_long
-    has_score = home_goals is not None and away_goals is not None
-    if has_score and kickoff_at < now - timedelta(hours=2):
-        return "FT", status_long
-    if kickoff_at <= now <= kickoff_at + timedelta(hours=3):
-        return "LIVE" if has_score else "UNKNOWN", status_long
-    return "UNKNOWN", status_long
+    return "UNKNOWN", provider_name or (f"SStats status {raw_text}" if raw_text is not None else None)
 
 
 def _integrity_message(exc: IntegrityError, game_id) -> str:
@@ -121,6 +143,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     items = _items(payload)
     created = updated = skipped = classified_rounds = 0
     skip_reasons: dict[str, int] = {}
+    status_counts: dict[str, int] = {}
     current_game_id = None
     try:
         for item in items:
@@ -137,7 +160,8 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
             match = await session.scalar(select(Match).where(Match.provider==SSTATS_PROVIDER,Match.provider_id==int(game_id)))
             is_new = match is None; kickoff_at=_parse_datetime(date_value); season=int(_pick(item,"year","Year",default=year))
             home_goals=_pick(item,"scoreHome","ScoreHome","scoreHomeFT","ScoreHomeFT"); away_goals=_pick(item,"scoreAway","ScoreAway","scoreAwayFT","ScoreAwayFT")
-            status_short,status_long=_normalize_status(_pick(item,"status","Status"),kickoff_at,home_goals,away_goals)
+            raw_status=_pick(item,"status","Status"); raw_status_name=_pick(item,"statusName","StatusName")
+            status_short,status_long=_normalize_status(raw_status,raw_status_name); status_counts[status_short]=status_counts.get(status_short,0)+1
             provider_round=_pick(item,"round","Round","roundName","RoundName"); classified=classify_ucl_round(season,kickoff_at); round_name=provider_round or (classified["round_label"] if classified else None)
             if not provider_round and classified: classified_rounds += 1
             if is_new:
@@ -148,7 +172,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
     except IntegrityError as exc:
         await session.rollback(); raise RuntimeError("SStats database integrity error: "+_integrity_message(exc,current_game_id)) from exc
 
-    result={"provider":SSTATS_PROVIDER,"league_id":CHAMPIONS_LEAGUE_ID,"year":year,"season_ref":{k:v for k,v in season_ref.items() if k!='raw'},"received":len(items),"created":created,"updated":updated,"classified_rounds":classified_rounds,"skipped":skipped,"skip_reasons":skip_reasons}
+    result={"provider":SSTATS_PROVIDER,"league_id":CHAMPIONS_LEAGUE_ID,"year":year,"season_ref":{k:v for k,v in season_ref.items() if k!='raw'},"received":len(items),"created":created,"updated":updated,"classified_rounds":classified_rounds,"skipped":skipped,"skip_reasons":skip_reasons,"status_counts":status_counts}
     try: result["team_metadata"] = await sync_sstats_team_metadata(session)
     except Exception as exc:
         await session.rollback(); result["team_metadata"]={"error":type(exc).__name__}
