@@ -12,7 +12,7 @@ from app.models import Match, OraclePrediction, Team
 from app.providers.sstats import SStatsProvider
 
 router=APIRouter(prefix='/api/oracle',tags=['oracle']);settings=get_settings()
-CACHE_SCHEMA_VERSION=2
+CACHE_SCHEMA_VERSION=3
 
 def _num(v):
     try:x=float(v);return x if math.isfinite(x) else None
@@ -80,8 +80,8 @@ def _match_rows(v,kind='recent'):
             row={'date':_clean_text(x.get('date')),'home':_clean_text(x.get('home')),'away':_clean_text(x.get('away')),'score':_clean_text(x.get('score')),'competition':_clean_text(x.get('competition'))}
             if row['home'] and row['away'] and row['score']:rows.append(row)
         else:
-            row={'date':_clean_text(x.get('date')),'opponent':_clean_text(x.get('opponent')),'score':_clean_text(x.get('score')),'competition':_clean_text(x.get('competition')),'result':str(x.get('result') or '').upper()[:1]}
-            if row['opponent'] and row['score']:rows.append(row)
+            row={'date':_clean_text(x.get('date')),'home':_clean_text(x.get('home')),'away':_clean_text(x.get('away')),'score':_clean_text(x.get('score')),'competition':_clean_text(x.get('competition')),'result':str(x.get('result') or '').upper()[:1]}
+            if row['home'] and row['away'] and row['score']:rows.append(row)
     return rows
 
 def _normalize_web(data):
@@ -110,9 +110,9 @@ async def _web_oracle_batch(items):
     client=AsyncOpenAI(api_key=settings.openai_api_key)
     compact=[{'match_id':x['match'].id,'home':x['home'].name,'away':x['away'].name,'kickoff_at':x['match'].kickoff_at.isoformat(),'season':x['match'].season,'local':x['local']} for x in items]
     prompt=f'''Ты футбольный аналитик приложения «Угадай счёт». Исследуй СРАЗУ несколько футбольных матчей одним веб-исследованием. Матчи: {json.dumps(compact,ensure_ascii=False,default=str)}.
-Для КАЖДОГО match_id отдельно проверь свежие данные. ОБЯЗАТЕЛЬНО найди и верни: (1) ровно последние 5 завершённых матчей команды хозяев до указанной даты матча, с датой, соперником, счётом с точки зрения этой команды, турниром и W/D/L; (2) ровно последние 5 завершённых матчей команды гостей в том же формате; (3) до 5 последних очных встреч этих двух клубов до даты прогнозируемого матча — дата, кто был хозяином/гостем, итоговый счёт и турнир. Самую свежую очную встречу поставь первой. Если очных встреч не было, верни пустой массив и явно скажи это в head_to_head.
+Для КАЖДОГО match_id отдельно проверь свежие данные. ОБЯЗАТЕЛЬНО найди и верни: (1) ровно последние 5 завершённых матчей команды хозяев до указанной даты матча; для каждого матча верни дату, ПОЛНОЕ противостояние home/away, итоговый счёт в порядке хозяева:гости, турнир и результат W/D/L с точки зрения анализируемой команды; (2) ровно последние 5 завершённых матчей команды гостей в том же формате; (3) до 5 последних очных встреч этих двух клубов до даты прогнозируемого матча — дата, кто был хозяином/гостем, итоговый счёт и турнир. Самую свежую встречу ставь первой. Если очных встреч не было, верни пустой массив и явно скажи это в head_to_head.
 Также проверь домашнюю/гостевую форму, голы и xG/xGA если надёжно доступны, подтверждённые травмы и дисквалификации, ожидаемые составы/ротацию, турнирный контекст, свежие новости и рыночные коэффициенты. Сверяй точные команды и дату матча. Не смешивай факты разных матчей. Не включай матчи, сыгранные ПОСЛЕ kickoff_at прогнозируемой встречи. Не выдумывай отсутствующие данные. Приоритет источников: официальные сайты клубов и турниров, UEFA, крупные спортивные СМИ и надёжные статистические сайты.
-Не вставляй URL, markdown-ссылки, названия источников или citations внутрь текстовых полей. Верни ТОЛЬКО JSON без markdown вида {{"matches":[{{"match_id":123,"home_score":1,"away_score":1,"confidence":60,"data_quality":"high|medium|low","probabilities":{{"home":30,"draw":35,"away":35}},"reasoning":"2-4 конкретных предложения по-русски","form":{{"home":"кратко","away":"кратко"}},"recent_matches":{{"home":[{{"date":"YYYY-MM-DD","opponent":"Team","score":"2:1","competition":"Competition","result":"W"}}],"away":[{{"date":"YYYY-MM-DD","opponent":"Team","score":"0:1","competition":"Competition","result":"L"}}]}},"head_to_head":"краткий итог истории противостояний и когда встречались в последний раз","head_to_head_matches":[{{"date":"YYYY-MM-DD","home":"Team A","away":"Team B","score":"2:1","competition":"Competition"}}],"injuries":["..."],"key_factors":["3-6 факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}]}}. Вероятности каждого матча должны суммироваться до 100.'''
+Не вставляй URL, markdown-ссылки, названия источников или citations внутрь текстовых полей. Верни ТОЛЬКО JSON без markdown вида {{"matches":[{{"match_id":123,"home_score":1,"away_score":1,"confidence":60,"data_quality":"high|medium|low","probabilities":{{"home":30,"draw":35,"away":35}},"reasoning":"2-4 конкретных предложения по-русски","form":{{"home":"кратко","away":"кратко"}},"recent_matches":{{"home":[{{"date":"YYYY-MM-DD","home":"Team A","away":"Team B","score":"2:1","competition":"Competition","result":"W"}}],"away":[{{"date":"YYYY-MM-DD","home":"Team C","away":"Team D","score":"0:1","competition":"Competition","result":"L"}}]}},"head_to_head":"краткий итог истории противостояний и когда встречались в последний раз","head_to_head_matches":[{{"date":"YYYY-MM-DD","home":"Team A","away":"Team B","score":"2:1","competition":"Competition"}}],"injuries":["..."],"key_factors":["3-6 факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}]}}. Вероятности каждого матча должны суммироваться до 100.'''
     try:
         r=await client.responses.create(model=settings.openai_oracle_model,tools=[{'type':'web_search'}],tool_choice='auto',input=prompt)
         raw=_json_text(r.output_text);rows=raw.get('matches') if isinstance(raw,dict) else None
