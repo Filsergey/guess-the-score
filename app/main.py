@@ -1,5 +1,7 @@
 import asyncio
+from collections import Counter
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
@@ -10,7 +12,7 @@ from sqlalchemy.orm import aliased
 from app.auth import router as auth_router
 from app.competitions.champions_league import classify_ucl_round
 from app.config import get_settings
-from app.database import engine, get_db
+from app.database import SessionLocal, engine, get_db
 from app.leagues import router as leagues_router
 from app.localization import normalize_team_name, round_name_ru, team_name_ru
 from app.migrations import migrate_provider_keys
@@ -25,17 +27,40 @@ from app.providers.sstats import SStatsProvider
 from app.services.oracle_scheduler import oracle_scheduler_loop
 from app.services.sstats_sync import sync_sstats_champions_league, sync_sstats_team_metadata
 settings=get_settings();STATIC_DIR=Path(__file__).resolve().parent/'static'
+AUTO_SYNC_INTERVAL_SECONDS=3600
+sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
+
+def _current_sstats_season():
+ now=datetime.now(timezone.utc);return now.year if now.month>=7 else now.year-1
+
+async def _automatic_sstats_sync_once():
+ if sync_runtime['running']:return
+ sync_runtime['running']=True;sync_runtime['last_started_at']=datetime.now(timezone.utc).isoformat();sync_runtime['last_error']=None
+ try:
+  async with SessionLocal() as db:
+   sync_runtime['last_result']=await sync_sstats_champions_league(db,_current_sstats_season())
+ except Exception as exc:
+  sync_runtime['last_error']=type(exc).__name__
+ finally:
+  sync_runtime['running']=False;sync_runtime['last_finished_at']=datetime.now(timezone.utc).isoformat()
+
+async def automatic_sstats_sync_loop():
+ await asyncio.sleep(5)
+ while True:
+  await _automatic_sstats_sync_once()
+  await asyncio.sleep(AUTO_SYNC_INTERVAL_SECONDS)
+
 @asynccontextmanager
 async def lifespan(_:FastAPI):
  async with engine.begin() as conn:await conn.run_sync(Base.metadata.create_all);await migrate_provider_keys(conn)
- scheduler_task=asyncio.create_task(oracle_scheduler_loop()) if settings.oracle_scheduler_enabled else None;player_bootstrap_task=asyncio.create_task(bootstrap_popular_players())
+ scheduler_task=asyncio.create_task(oracle_scheduler_loop()) if settings.oracle_scheduler_enabled else None;player_bootstrap_task=asyncio.create_task(bootstrap_popular_players());sstats_sync_task=asyncio.create_task(automatic_sstats_sync_loop())
  try:yield
  finally:
-  for task in (scheduler_task,player_bootstrap_task):
+  for task in (scheduler_task,player_bootstrap_task,sstats_sync_task):
    if task:
     task.cancel()
     with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.16.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.17.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
@@ -56,6 +81,9 @@ def serialize_sstats_details(d,g=None):
  g=g or {};names=['ShotsOnGoal','ShotsOffGoal','TotalShots','BlockedShots','ShotsInsideBox','ShotsOutsideBox','Fouls','CornerKicks','BallPossession','YellowCards','RedCards','GoalkeeperSaves','TotalPasses','PassesAccurate','Offsides','ExpectedGoals','CalculatedXg'];stats={n:{'home':_v(d,n+'Home'),'away':_v(d,n+'Away')} for n in names};return {'season_uid':_v(d,'SeasonUid'),'coverage':_v(d,'Coverage'),'venue':{'id':_v(d,'VenueId'),'name':_v(d,'VenueName'),'city':_v(d,'VenueCity'),'address':_v(d,'VenueAddress')},'coaches':{'home':_v(d,'HomeTeamCoachName'),'away':_v(d,'AwayTeamCoachName')},'score':{'ht':{'home':_v(d,'ScoreHomeHT'),'away':_v(d,'ScoreAwayHT')},'ft':{'home':_v(d,'ScoreHomeFT'),'away':_v(d,'ScoreAwayFT')},'et':{'home':_v(d,'ScoreHomeET'),'away':_v(d,'ScoreAwayET')},'penalties':{'home':_v(d,'ScoreHomePT'),'away':_v(d,'ScoreAwayPT')}},'odds':{'home':_v(d,'Winner1'),'draw':_v(d,'WinnerX'),'away':_v(d,'Winner2')},'model':{'rating':{'home':_v(d,'GlickoRatingHome') or _v(g,'RatingHome'),'away':_v(d,'GlickoRatingAway') or _v(g,'RatingAway')},'win_probability':{'home':_v(d,'GlickoWinProbHome') or _v(g,'WinProbHome'),'away':_v(d,'GlickoWinProbAway') or _v(g,'WinProbAway')},'xg':{'home':_v(d,'GlickoXgHome') or _v(g,'XgHome'),'away':_v(d,'GlickoXgAway') or _v(g,'XgAway')}},'statistics':stats}
 @app.get('/health')
 async def health():return {'status':'ok','service':settings.app_name,'environment':settings.app_env}
+@app.get('/api/sync/status',include_in_schema=False)
+async def public_sync_status(db:AsyncSession=Depends(get_db)):
+ season=_current_sstats_season();rows=(await db.execute(select(Match.status_short).where(Match.provider=='sstats',Match.season==season))).scalars().all();return {'provider':'sstats','season':season,'automatic':True,'interval_seconds':AUTO_SYNC_INTERVAL_SECONDS,'running':sync_runtime['running'],'last_started_at':sync_runtime['last_started_at'],'last_finished_at':sync_runtime['last_finished_at'],'last_error':sync_runtime['last_error'],'matches_in_db':len(rows),'status_counts':dict(sorted(Counter(rows).items()))}
 @app.get('/api/admin/sstats/leagues')
 async def sstats_leagues(x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_leagues()
 @app.get('/api/admin/sstats/games')
