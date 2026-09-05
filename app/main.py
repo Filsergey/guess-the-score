@@ -49,15 +49,15 @@ async def lifespan(_:FastAPI):
  try:yield
  finally:
   for task in (scheduler_task,player_bootstrap_task,sstats_sync_task):
-   if task:task.cancel();
+   if task:task.cancel()
    if task:
     with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.19.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.20.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=2"></script><script src="/static/tournament-save-guard.js?v=1"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=2"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=1"></script><script src="/static/match-feed.js?v=2"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
