@@ -31,6 +31,7 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE players ADD COLUMN IF NOT EXISTS has_photo BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE players ADD COLUMN IF NOT EXISTS shirt_number INTEGER NULL",
         "ALTER TABLE players ADD COLUMN IF NOT EXISTS nationality VARCHAR(64) NULL",
+        "ALTER TABLE players ALTER COLUMN nationality TYPE VARCHAR(64)",
         "CREATE INDEX IF NOT EXISTS ix_players_has_photo ON players (has_photo)",
         "ALTER TABLE tournament_predictions ADD COLUMN IF NOT EXISTS top_scorer_player_id INTEGER NULL REFERENCES players(id) ON DELETE SET NULL",
         "ALTER TABLE tournament_predictions ADD COLUMN IF NOT EXISTS top_assistant_player_id INTEGER NULL REFERENCES players(id) ON DELETE SET NULL",
