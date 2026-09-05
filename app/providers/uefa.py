@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 
 UEFA_STANDINGS_URL = "https://standings.uefa.com/v1/standings"
-UEFA_SITE_BASE = "https://www.uefa.com"
+UEFA_SITE_BASE = "https://ru.uefa.com"
 UEFA_COMPETITION_PATH = "uefachampionsleague"
 
 
@@ -34,8 +34,9 @@ class UEFAProvider:
     """Small client for public UEFA web data used by the app.
 
     Team metadata comes from standings.uefa.com. Squad data is parsed from the
-    public UEFA club squad page. We persist the result locally, so normal app
-    requests never need to scrape UEFA.
+    Russian UEFA club squad page so user-facing player metadata follows UEFA's
+    Russian localization. We persist the result locally, so normal app requests
+    never need to scrape UEFA.
     """
 
     def __init__(self) -> None:
@@ -45,7 +46,7 @@ class UEFAProvider:
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/152.0.0.0 Safari/537.36"
             ),
-            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Language": "ru-RU,ru;q=0.9,en;q=0.7",
         }
 
     async def competition_teams(self, competition_id: int = 1, season_year: int = 2027) -> list[UEFATeam]:
@@ -68,7 +69,7 @@ class UEFAProvider:
                 team_id = int(team["id"])
                 teams[team_id] = UEFATeam(
                     id=team_id,
-                    name=str(team.get("internationalName") or display_names.get("EN") or team_id),
+                    name=str(display_names.get("RU") or team.get("internationalName") or display_names.get("EN") or team_id),
                     name_ru=display_names.get("RU"),
                     country_code=team.get("countryCode"),
                     logo_url=team.get("mediumLogoUrl") or team.get("logoUrl") or team.get("bigLogoUrl"),
@@ -89,6 +90,14 @@ class UEFAProvider:
             "forward": "Attacker",
             "attackers": "Attacker",
             "attacker": "Attacker",
+            "вратари": "Goalkeeper",
+            "вратарь": "Goalkeeper",
+            "защитники": "Defender",
+            "защитник": "Defender",
+            "полузащитники": "Midfielder",
+            "полузащитник": "Midfielder",
+            "нападающие": "Attacker",
+            "нападающий": "Attacker",
         }
         return mapping.get(text)
 
@@ -96,10 +105,6 @@ class UEFAProvider:
     def parse_squad_html(html: str) -> list[UEFAPlayer]:
         soup = BeautifulSoup(html, "html.parser")
         players: dict[int, UEFAPlayer] = {}
-
-        # UEFA currently renders one squad table per position group. The exact
-        # custom-element classes can change, so anchors containing /players/
-        # are the stable primary selector.
         anchors = soup.select('a[href*="/clubs/players/"]')
         for anchor in anchors:
             href = str(anchor.get("href") or "")
@@ -176,5 +181,8 @@ class UEFAProvider:
             "status_code": response.status_code,
             "html_bytes": len(response.content),
             "players_found": len(players),
-            "contains_squad_unavailable": "Official squad list not available yet" in html,
+            "contains_squad_unavailable": (
+                "Official squad list not available yet" in html
+                or "Официальный список состава пока недоступен" in html
+            ),
         }
