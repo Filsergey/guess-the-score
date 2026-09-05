@@ -12,7 +12,7 @@ from app.competitions.champions_league import classify_ucl_round
 from app.config import get_settings
 from app.database import engine, get_db
 from app.leagues import router as leagues_router
-from app.localization import round_name_ru, team_name_ru
+from app.localization import normalize_team_name, round_name_ru, team_name_ru
 from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
 from app.oracle import router as oracle_router
@@ -34,15 +34,21 @@ async def lifespan(_:FastAPI):
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.13.0',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.13.1',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=5"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=6"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(x_admin_token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if x_admin_token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
-def serialize_match(m,h,a):
- c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':h.logo_url,'goals':m.home_goals},'away':{'id':a.id,'provider_id':a.provider_id,'provider':a.provider,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':a.logo_url,'goals':m.away_goals}}
+async def _logo_catalog(db):
+ rows=(await db.execute(select(Team).where(Team.logo_url.is_not(None)))).scalars().all();catalog={}
+ for t in rows:
+  key=normalize_team_name(t.name)
+  if key and key not in catalog:catalog[key]=t.logo_url
+ return catalog
+def serialize_match(m,h,a,logos=None):
+ logos=logos or {};c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':h.logo_url or logos.get(normalize_team_name(h.name)),'goals':m.home_goals},'away':{'id':a.id,'provider_id':a.provider_id,'provider':a.provider,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':a.logo_url or logos.get(normalize_team_name(a.name)),'goals':m.away_goals}}
 def _first_item(p):
  d=p.get('data') or p.get('response') or [];return (d[0] if d else {}) if isinstance(d,list) else (d if isinstance(d,dict) else {})
 def _v(d,n):return d.get(n[:1].lower()+n[1:],d.get(n))
@@ -82,19 +88,19 @@ async def matches(season:int|None=Query(default=None,ge=2020,le=2100),provider:s
  if season is not None:q=q.where(Match.season==season)
  if provider is not None:q=q.where(Match.provider==provider)
  if status is not None:q=q.where(Match.status_short==status.upper())
- rows=(await db.execute(q)).all();return {'count':len(rows),'response':[serialize_match(*r) for r in rows]}
+ rows=(await db.execute(q)).all();logos=await _logo_catalog(db);return {'count':len(rows),'response':[serialize_match(*r,logos) for r in rows]}
 async def _match_row(match_id,db):
  h,a=aliased(Team),aliased(Team);return (await db.execute(select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.id==match_id))).first()
 @app.get('/api/matches/{match_id}')
 async def match_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  r=await _match_row(match_id,db)
  if not r:raise HTTPException(404,'Match not found')
- return serialize_match(*r)
+ return serialize_match(*r,await _logo_catalog(db))
 @app.get('/api/matches/{match_id}/details')
 async def match_rich_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  r=await _match_row(match_id,db)
  if not r:raise HTTPException(404,'Match not found')
- m,h,a=r;base=serialize_match(m,h,a)
+ m,h,a=r;base=serialize_match(m,h,a,await _logo_catalog(db))
  if m.provider!='sstats':return {**base,'details_available':False,'details_source':None,'details_errors':[],'details':None}
  p=SStatsProvider();qd={};gd={};gl={};errors=[]
  try:qd=_first_item(await p.query_game_details(m.provider_id))
