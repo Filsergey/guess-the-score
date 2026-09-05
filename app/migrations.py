@@ -29,6 +29,8 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS locked_at TIMESTAMPTZ NULL",
         "CREATE INDEX IF NOT EXISTS ix_oracle_predictions_locked_at ON oracle_predictions (locked_at)",
         "ALTER TABLE players ADD COLUMN IF NOT EXISTS has_photo BOOLEAN NOT NULL DEFAULT FALSE",
+        "ALTER TABLE players ADD COLUMN IF NOT EXISTS shirt_number INTEGER NULL",
+        "ALTER TABLE players ADD COLUMN IF NOT EXISTS nationality VARCHAR(16) NULL",
         "CREATE INDEX IF NOT EXISTS ix_players_has_photo ON players (has_photo)",
     ]
     for statement in statements:
