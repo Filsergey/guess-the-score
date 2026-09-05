@@ -156,7 +156,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
 
 
 async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = None) -> dict:
-    """SStats owns team IDs; UEFA enriches current UCL participants with official names, codes and crests."""
+    """SStats owns team IDs; UEFA enriches only the 36 current UCL main-stage teams."""
     provider = SStatsProvider()
     sstats_rows = _items(await provider.get_teams(limit=1000))
     sstats_by_id = {}
@@ -180,6 +180,16 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
         if sstats_logo and not team.logo_url: team.logo_url=str(sstats_logo)
 
     now=datetime.now(timezone.utc); season=now.year+(1 if now.month>=7 else 0)
+    sstats_season=season-1
+    main_stage_matches=(await session.execute(select(Match).where(Match.provider==SSTATS_PROVIDER,Match.season==sstats_season))).scalars().all()
+    main_stage_team_ids={
+        team_id
+        for match in main_stage_matches
+        if classify_ucl_round(sstats_season,match.kickoff_at) is not None
+        for team_id in (match.home_team_id,match.away_team_id)
+        if team_id is not None
+    }
+
     uefa_teams=await UEFAProvider().competition_teams(UEFA_CHAMPIONS_LEAGUE_ID,season)
     by_name={}; code_candidates={}
     for uefa in uefa_teams:
@@ -192,8 +202,15 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
         if code: code_candidates.setdefault(code,[]).append(uefa)
     by_code={code:rows[0] for code,rows in code_candidates.items() if len(rows)==1}
 
-    updated=unmatched=0; unmatched_names=[]; matched_uefa_ids=set()
+    updated=0; unmatched_names=[]; matched_uefa_ids=set(); main_stage_unmatched=[]
+    current_uefa_ids={u.id for u in uefa_teams}
     for team in teams:
+        if team.id not in main_stage_team_ids:
+            if team.uefa_id in current_uefa_ids:
+                team.uefa_id=None
+            if len(unmatched_names)<40:
+                unmatched_names.append(team.source_name or team.name)
+            continue
         uefa=None
         for candidate in (team.source_name,team.name):
             key=_norm(candidate)
@@ -204,8 +221,7 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
             code=_norm_code(team.code)
             if code: uefa=by_code.get(code)
         if not uefa:
-            unmatched+=1
-            if len(unmatched_names)<40: unmatched_names.append(team.source_name or team.name)
+            main_stage_unmatched.append(team.source_name or team.name)
             continue
         matched_uefa_ids.add(uefa.id)
         team.uefa_id=uefa.id
@@ -216,4 +232,20 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
         if logo: team.logo_url=logo
         updated+=1
     await session.commit()
-    return {"provider":"sstats","catalog_source":"sstats:/Teams/list","metadata_source":"uefa-standings","season_year":season,"teams_in_db":len(teams),"sstats_catalog":len(sstats_rows),"uefa_catalog":len(uefa_teams),"updated":updated,"uefa_matched":len(matched_uefa_ids),"uefa_unmatched":len(uefa_teams)-len(matched_uefa_ids),"unmatched_non_uefa":unmatched,"unmatched_names":unmatched_names}
+    non_main_stage=sum(1 for team in teams if team.id not in main_stage_team_ids)
+    return {
+        "provider":"sstats",
+        "catalog_source":"sstats:/Teams/list",
+        "metadata_source":"uefa-standings",
+        "season_year":season,
+        "teams_in_db":len(teams),
+        "sstats_catalog":len(sstats_rows),
+        "uefa_catalog":len(uefa_teams),
+        "main_stage_teams":sum(1 for team in teams if team.id in main_stage_team_ids),
+        "updated":updated,
+        "uefa_matched":len(matched_uefa_ids),
+        "uefa_unmatched":len(uefa_teams)-len(matched_uefa_ids),
+        "main_stage_unmatched":main_stage_unmatched,
+        "unmatched_non_uefa":non_main_stage,
+        "unmatched_names":unmatched_names,
+    }
