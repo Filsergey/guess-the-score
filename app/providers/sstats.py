@@ -109,3 +109,13 @@ class SStatsProvider:
 
     async def get_team(self, team_id: int) -> dict:
         return await self._get(f"teams/{team_id}")
+
+    async def find_players(self, name: str) -> dict:
+        # SStats documents GET /Players/find. `name` is the search term used by the endpoint.
+        return await self._get("Players/find", {"name": name})
+
+    async def get_players(self, **params) -> dict:
+        return await self._get("Players/list", params or None)
+
+    async def get_player(self, player_id: int) -> dict:
+        return await self._get(f"Players/{player_id}")
