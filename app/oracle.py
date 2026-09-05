@@ -12,6 +12,7 @@ from app.models import Match, OraclePrediction, Team
 from app.providers.sstats import SStatsProvider
 
 router=APIRouter(prefix='/api/oracle',tags=['oracle']);settings=get_settings()
+CACHE_SCHEMA_VERSION=2
 
 def _num(v):
     try:x=float(v);return x if math.isfinite(x) else None
@@ -70,6 +71,19 @@ def _clean_text(v):
     s=re.sub(r'https?://\S+', '', s);s=re.sub(r'\(\s*\)', '', s);s=re.sub(r'\s+([,.;:!?])', r'\1', s)
     return re.sub(r'\s{2,}', ' ', s).strip()
 
+def _match_rows(v,kind='recent'):
+    if not isinstance(v,list):return []
+    rows=[]
+    for x in v[:5]:
+        if not isinstance(x,dict):continue
+        if kind=='h2h':
+            row={'date':_clean_text(x.get('date')),'home':_clean_text(x.get('home')),'away':_clean_text(x.get('away')),'score':_clean_text(x.get('score')),'competition':_clean_text(x.get('competition'))}
+            if row['home'] and row['away'] and row['score']:rows.append(row)
+        else:
+            row={'date':_clean_text(x.get('date')),'opponent':_clean_text(x.get('opponent')),'score':_clean_text(x.get('score')),'competition':_clean_text(x.get('competition')),'result':str(x.get('result') or '').upper()[:1]}
+            if row['opponent'] and row['score']:rows.append(row)
+    return rows
+
 def _normalize_web(data):
     hs=max(0,min(20,int(_num(data.get('home_score')) or 0)));as_=max(0,min(20,int(_num(data.get('away_score')) or 0)))
     p=data.get('probabilities') if isinstance(data.get('probabilities'),dict) else {};ph=_num(p.get('home'));pd=_num(p.get('draw'));pa=_num(p.get('away'))
@@ -83,17 +97,8 @@ def _normalize_web(data):
     def strings(v):return [_clean_text(x) for x in v if _clean_text(x)] if isinstance(v,list) else []
     form=data.get('form') if isinstance(data.get('form'),dict) else None
     if form:form={'home':_clean_text(form.get('home')),'away':_clean_text(form.get('away'))}
-    return {'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':confidence,'data_quality':q,'probabilities':{'home':ph,'draw':pd,'away':pa} if ph is not None else None,'reasoning':_clean_text(data.get('reasoning')) or 'ИИ выполнил веб-исследование матча.','form':form,'head_to_head':_clean_text(data.get('head_to_head')),'injuries':strings(data.get('injuries')),'key_factors':strings(data.get('key_factors')),'failure_risks':strings(data.get('failure_risks')),'researched_at':data.get('researched_at')}
-
-def _source_list(response):
-    sources=[]
-    for item in response.output:
-        if getattr(item,'type',None)=='web_search_call':
-            action=getattr(item,'action',None)
-            for src in (getattr(action,'sources',None) or []):
-                url=getattr(src,'url',None);title=getattr(src,'title',None)
-                if url and not any(x['url']==url for x in sources):sources.append({'title':title or url,'url':url})
-    return sources[:15]
+    recent=data.get('recent_matches') if isinstance(data.get('recent_matches'),dict) else {}
+    return {'schema_version':CACHE_SCHEMA_VERSION,'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':confidence,'data_quality':q,'probabilities':{'home':ph,'draw':pd,'away':pa} if ph is not None else None,'reasoning':_clean_text(data.get('reasoning')) or 'ИИ выполнил веб-исследование матча.','form':form,'recent_matches':{'home':_match_rows(recent.get('home')),'away':_match_rows(recent.get('away'))},'head_to_head':_clean_text(data.get('head_to_head')),'head_to_head_matches':_match_rows(data.get('head_to_head_matches'),'h2h'),'injuries':strings(data.get('injuries')),'key_factors':strings(data.get('key_factors')),'failure_risks':strings(data.get('failure_risks')),'researched_at':data.get('researched_at')}
 
 async def _match_context(match,db):
     home=await db.get(Team,match.home_team_id);away=await db.get(Team,match.away_team_id)
@@ -105,25 +110,25 @@ async def _web_oracle_batch(items):
     client=AsyncOpenAI(api_key=settings.openai_api_key)
     compact=[{'match_id':x['match'].id,'home':x['home'].name,'away':x['away'].name,'kickoff_at':x['match'].kickoff_at.isoformat(),'season':x['match'].season,'local':x['local']} for x in items]
     prompt=f'''Ты футбольный аналитик приложения «Угадай счёт». Исследуй СРАЗУ несколько футбольных матчей одним веб-исследованием. Матчи: {json.dumps(compact,ensure_ascii=False,default=str)}.
-Для КАЖДОГО match_id отдельно проверь свежие данные: последние 5-10 матчей, домашнюю/гостевую форму, очные встречи, голы и xG/xGA если доступны, подтверждённые травмы и дисквалификации, ожидаемые составы/ротацию, турнирный контекст, свежие новости и рыночные коэффициенты. Сверяй точные команды и дату матча. Не смешивай факты разных матчей. Не выдумывай отсутствующие данные. Приоритет источников: официальные сайты клубов и турниров, UEFA, крупные спортивные СМИ и надёжные статистические сайты.
-Не вставляй URL, markdown-ссылки, названия источников или citations внутрь текстовых полей. Верни ТОЛЬКО JSON без markdown вида {{"matches":[{{"match_id":123,"home_score":1,"away_score":1,"confidence":60,"data_quality":"high|medium|low","probabilities":{{"home":30,"draw":35,"away":35}},"reasoning":"2-4 конкретных предложения по-русски","form":{{"home":"кратко","away":"кратко"}},"head_to_head":"кратко","injuries":["..."],"key_factors":["3-6 факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}]}}. Вероятности каждого матча должны суммироваться до 100.'''
+Для КАЖДОГО match_id отдельно проверь свежие данные. ОБЯЗАТЕЛЬНО найди и верни: (1) ровно последние 5 завершённых матчей команды хозяев до указанной даты матча, с датой, соперником, счётом с точки зрения этой команды, турниром и W/D/L; (2) ровно последние 5 завершённых матчей команды гостей в том же формате; (3) до 5 последних очных встреч этих двух клубов до даты прогнозируемого матча — дата, кто был хозяином/гостем, итоговый счёт и турнир. Самую свежую очную встречу поставь первой. Если очных встреч не было, верни пустой массив и явно скажи это в head_to_head.
+Также проверь домашнюю/гостевую форму, голы и xG/xGA если надёжно доступны, подтверждённые травмы и дисквалификации, ожидаемые составы/ротацию, турнирный контекст, свежие новости и рыночные коэффициенты. Сверяй точные команды и дату матча. Не смешивай факты разных матчей. Не включай матчи, сыгранные ПОСЛЕ kickoff_at прогнозируемой встречи. Не выдумывай отсутствующие данные. Приоритет источников: официальные сайты клубов и турниров, UEFA, крупные спортивные СМИ и надёжные статистические сайты.
+Не вставляй URL, markdown-ссылки, названия источников или citations внутрь текстовых полей. Верни ТОЛЬКО JSON без markdown вида {{"matches":[{{"match_id":123,"home_score":1,"away_score":1,"confidence":60,"data_quality":"high|medium|low","probabilities":{{"home":30,"draw":35,"away":35}},"reasoning":"2-4 конкретных предложения по-русски","form":{{"home":"кратко","away":"кратко"}},"recent_matches":{{"home":[{{"date":"YYYY-MM-DD","opponent":"Team","score":"2:1","competition":"Competition","result":"W"}}],"away":[{{"date":"YYYY-MM-DD","opponent":"Team","score":"0:1","competition":"Competition","result":"L"}}]}},"head_to_head":"краткий итог истории противостояний и когда встречались в последний раз","head_to_head_matches":[{{"date":"YYYY-MM-DD","home":"Team A","away":"Team B","score":"2:1","competition":"Competition"}}],"injuries":["..."],"key_factors":["3-6 факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}]}}. Вероятности каждого матча должны суммироваться до 100.'''
     try:
-        r=await client.responses.create(model=settings.openai_oracle_model,tools=[{'type':'web_search'}],tool_choice='auto',include=['web_search_call.action.sources'],input=prompt)
+        r=await client.responses.create(model=settings.openai_oracle_model,tools=[{'type':'web_search'}],tool_choice='auto',input=prompt)
         raw=_json_text(r.output_text);rows=raw.get('matches') if isinstance(raw,dict) else None
         if not isinstance(rows,list):return {}
-        sources=_source_list(r);result={}
-        valid={x['match'].id for x in items}
+        result={};valid={x['match'].id for x in items}
         for row in rows:
             if not isinstance(row,dict):continue
             mid=int(_num(row.get('match_id')) or 0)
             if mid not in valid:continue
-            data=_normalize_web(row);data.update({'match_id':mid,'source':'openai-web','sources':sources});result[mid]=data
+            data=_normalize_web(row);data.update({'match_id':mid,'source':'openai-web'});result[mid]=data
         return result
     except Exception:return {}
 
 async def _save_cache(db,match_id,data):
     row=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id==match_id))).scalar_one_or_none();now=datetime.now(timezone.utc)
-    payload=json.dumps(data,ensure_ascii=False,default=str)
+    data['schema_version']=CACHE_SCHEMA_VERSION;payload=json.dumps(data,ensure_ascii=False,default=str)
     if row is None:row=OraclePrediction(match_id=match_id,payload_json=payload,source=data.get('source','openai-web'),generated_at=now,updated_at=now);db.add(row)
     else:row.payload_json=payload;row.source=data.get('source','openai-web');row.generated_at=now;row.updated_at=now
 
@@ -131,14 +136,19 @@ async def _get_cache(db,match_id):
     row=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id==match_id))).scalar_one_or_none()
     if not row:return None
     try:
-        data=json.loads(row.payload_json);data['cached']=True;data['generated_at']=row.generated_at;return data
+        data=json.loads(row.payload_json)
+        if int(data.get('schema_version') or 0)<CACHE_SCHEMA_VERSION:return None
+        data.pop('sources',None);data['cached']=True;data['generated_at']=row.generated_at;return data
     except Exception:return None
 
 def _needs_refresh(match,cache_row,now):
     if cache_row is None:return True
+    try:
+        cached=json.loads(cache_row.payload_json)
+        if int(cached.get('schema_version') or 0)<CACHE_SCHEMA_VERSION:return True
+    except Exception:return True
     if match.kickoff_at<=now:return False
-    until=match.kickoff_at-now
-    age=now-cache_row.generated_at
+    until=match.kickoff_at-now;age=now-cache_row.generated_at
     if until<=timedelta(hours=3):return age>timedelta(hours=2)
     if until<=timedelta(hours=30):return age>timedelta(hours=12)
     return False
@@ -157,7 +167,7 @@ async def _fallback(ctx):
     factors=[]
     if rh is not None and ra is not None:factors.append(f'xG модели: {rh:.2f} — {ra:.2f}')
     elif used_form:factors.append(f'Оценка по форме: {hx:.2f} — {ax:.2f}')
-    return {'match_id':match.id,'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':max(35,min(82,round(max(probs)*100) if probs else 42)),'data_quality':'medium' if fh is not None else 'low','source':'database-form' if used_form else 'baseline','xg':{'home':round(rh,2),'away':round(ra,2)} if rh is not None and ra is not None else None,'probabilities':{'home':round(probs[0]*100,1),'draw':round(probs[1]*100,1),'away':round(probs[2]*100,1)} if probs else None,'reasoning':'Веб-исследование ИИ недоступно; используется резервная модель по нашим данным.','key_factors':factors or ['Недостаточно данных'],'failure_risks':['Составы и травмы могут изменить баланс'],'details_errors':errors}
+    return {'schema_version':CACHE_SCHEMA_VERSION,'match_id':match.id,'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':max(35,min(82,round(max(probs)*100) if probs else 42)),'data_quality':'medium' if fh is not None else 'low','source':'database-form' if used_form else 'baseline','xg':{'home':round(rh,2),'away':round(ra,2)} if rh is not None and ra is not None else None,'probabilities':{'home':round(probs[0]*100,1),'draw':round(probs[1]*100,1),'away':round(probs[2]*100,1)} if probs else None,'reasoning':'Веб-исследование ИИ недоступно; используется резервная модель по нашим данным.','recent_matches':{'home':[],'away':[]},'head_to_head':None,'head_to_head_matches':[],'key_factors':factors or ['Недостаточно данных'],'failure_risks':['Составы и травмы могут изменить баланс'],'details_errors':errors}
 
 @router.post('/admin/generate-batch')
 async def generate_batch(batch_size:int=Query(default=5,ge=1,le=10),hours_ahead:int=Query(default=120,ge=3,le=336),season:int|None=Query(default=None,ge=2020,le=2100),force:bool=Query(default=False),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
