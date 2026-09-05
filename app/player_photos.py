@@ -88,9 +88,9 @@ def _translate_position(value: str | None) -> str | None:
     return {'Goalkeeper':'Вратарь','Defender':'Защитник','Midfielder':'Полузащитник','Attacker':'Нападающий','Forward':'Нападающий','Right Winger':'Нападающий','Left Winger':'Нападающий','Centre-Forward':'Нападающий','Central Midfield':'Полузащитник','Attacking Midfield':'Полузащитник'}.get(value, value)
 
 
-async def _resolve_thesportsdb(name: str, expected_team: str | None = None) -> dict | None:
+async def _resolve_thesportsdb(name: str) -> dict | None:
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
             r = await client.get('https://www.thesportsdb.com/api/v1/json/123/searchplayers.php', params={'p': name.strip()}, headers={'User-Agent': 'guess-the-score/1.0'})
         if r.status_code != 200:
             return None
@@ -105,14 +105,9 @@ async def _resolve_thesportsdb(name: str, expected_team: str | None = None) -> d
         return None
     key = _norm(name)
     exact = [x for x in soccer if _norm(x.get('strPlayer')) == key]
-    pool = exact or soccer
-    if expected_team:
-        by_team = [x for x in pool if _team_matches(x.get('strTeam'), expected_team)]
-        if by_team:
-            pool = by_team
-        else:
-            return None
-    chosen = pool[0]
+    if not exact:
+        return None
+    chosen = exact[0]
     photo = chosen.get('strThumb') or chosen.get('strCutout') or chosen.get('strRender')
     if not isinstance(photo, str) or not photo.startswith('https://'):
         photo = None
@@ -137,17 +132,19 @@ async def resolve_player_photo(name: str = Query(min_length=3, max_length=100), 
         exact = [x for x in candidates if _norm(x['name']) == name_key]
         pool = exact or candidates
         if team:
-            by_team = [x for x in pool if _team_matches(x.get('team'), team)]
-            if by_team:
-                pool = by_team
-            else:
-                pool = []
+            pool = [x for x in pool if _team_matches(x.get('team'), team)]
         if pool:
             chosen = pool[0]
             result = {'found': True,'id': chosen['id'],'name': chosen['name'],'team': chosen.get('team'),'position': _translate_position(chosen.get('position')),'photo': '/api/player-photo?src=' + quote(chosen['photo_src'], safe=''),'source': 'api-football'}
             _RESOLVE_CACHE[key] = (now, result)
             return result
-    fallback = await _resolve_thesportsdb(name, team)
+    # For a player selected from our curated list we know the expected club.
+    # Do not fall back to a name-only source: duplicate names can produce a
+    # completely different player/photo. It is better to show no portrait
+    # than a wrong portrait.
+    if team:
+        return {'found': False, 'name': name, 'photo': None, 'team': team, 'position': None}
+    fallback = await _resolve_thesportsdb(name)
     if fallback:
         if fallback.get('found') or fallback.get('team') or fallback.get('position'):
             _RESOLVE_CACHE[key] = (now, fallback)
@@ -159,7 +156,7 @@ async def resolve_player_photo(name: str = Query(min_length=3, max_length=100), 
 async def player_photo_proxy(src: str = Query(min_length=8, max_length=1200)):
     url = _public_https_url(src)
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
             r = await client.get(url, headers={'User-Agent': 'guess-the-score/1.0'})
         if r.status_code != 200 or not r.content:
             raise HTTPException(404, 'Player photo not found')
