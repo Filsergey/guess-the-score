@@ -11,8 +11,9 @@ from sqlalchemy.orm import aliased
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.match_status import FINAL_MATCH_STATUSES
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, User, UserLeague
-from app.predictions import FINAL_MATCH_STATUSES, match_is_final, prediction_points
+from app.predictions import match_is_final, prediction_points
 
 router = APIRouter(prefix="/api/leagues", tags=["leagues"])
 
