@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
-from app.localization import normalize_team_name, team_logo_url, team_name_ru
+from app.localization import normalize_team_name, team_name_ru
 from app.models import Match, Team, TournamentPrediction, User
 from app.providers.sstats import SStatsProvider
 
@@ -26,17 +26,11 @@ async def _deadline(db,provider,season):
  return matches[0].kickoff_at
 def _out(p,deadline):
  now=datetime.now(timezone.utc);return {'provider':p.provider if p else None,'season':p.season if p else None,'deadline_at':deadline,'locked':now>=deadline,'prediction':None if not p else {'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'created_at':p.created_at,'updated_at':p.updated_at}}
-async def _logo_catalog(db):
- rows=(await db.execute(select(Team).where(Team.logo_url.is_not(None)))).scalars().all();catalog={}
- for t in rows:
-  key=normalize_team_name(t.name)
-  if key and key not in catalog:catalog[key]=t.logo_url
- return catalog
 async def _competition_teams(db,provider,season):
  matches=await _main_stage_matches(db,provider,season);ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
  if not ids:return []
- teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all();logos=await _logo_catalog(db)
- return [{'id':t.id,'provider_id':t.provider_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':team_logo_url(t.name,t.logo_url or logos.get(normalize_team_name(t.name)))} for t in teams]
+ teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
+ return [{'id':t.id,'provider_id':t.provider_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
 def _player_rows(payload):
  data=payload.get('data') or payload.get('response') or []
  if isinstance(data,dict):data=[data]
@@ -62,8 +56,8 @@ async def player_options(q:str|None=Query(default=None,max_length=80),provider:s
   if q and len(q.strip())>=2:
    try:payload=await p.get_players(Name=q.strip())
    except Exception as e:raise HTTPException(502,f'Player search is temporarily unavailable: {type(e).__name__}')
- items=_player_rows(payload);teams=await _competition_teams(db,provider,season);logos={normalize_team_name(x['name']):x['logo'] for x in teams if x.get('logo')}
- for item in items:item['team_logo']=logos.get(normalize_team_name(item.get('team_original'))) or team_logo_url(item.get('team_original'),None)
+ items=_player_rows(payload);teams=await _competition_teams(db,provider,season);logos={normalize_team_name(x['name']):x['logo'] for x in teams}
+ for item in items:item['team_logo']=logos.get(normalize_team_name(item.get('team_original')))
  return {'count':len(items),'response':items}
 @router.get('/mine')
 async def mine(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
