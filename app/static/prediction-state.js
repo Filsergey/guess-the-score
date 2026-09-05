@@ -1,12 +1,12 @@
 (()=>{
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 const style=document.createElement('style');style.textContent=`.prediction-result{margin:18px 0 12px;text-align:center}.prediction-result .actual{font-size:36px;font-weight:950}.prediction-result .mine{margin-top:7px;color:#a9bed1;font-size:14px}.prediction-result .points{display:inline-flex;margin-top:10px;padding:7px 12px;border-radius:999px;background:#0c2b25;border:1px solid #275f4c;color:#70e5ae;font-weight:900}.prediction-result .points.zero{background:#25181c;border-color:#563039;color:#ff9098}.prediction-live{margin:15px 0;padding:12px;border-radius:14px;border:1px solid rgba(255,77,98,.35);background:rgba(255,77,98,.06);text-align:center}.prediction-live strong{color:#ff7c8b}.prediction-lock{margin:12px 0;text-align:center;color:#8da4b9;font-size:12px}`;document.head.appendChild(style);
-function match(id){return (window.getMatchFeedData?.()||window.matchFeedData||[]).find(x=>x.id===id)||(window.allMatchesData||[]).find(x=>x.id===id)}
+const match=id=>window.GTS?.match(id)||null;
 function team(t){return `${t.logo?`<img src="${esc(t.logo)}" alt="">`:'<div class="crest"></div>'}${esc(t.name)}`}
 function fmt(dt){return new Date(dt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
 window.openPrediction=async function(id){
  const m=match(id);if(!m)return;window.activeMatch=m;const modal=document.getElementById('modal'),box=document.getElementById('sheetContent');box.innerHTML='<div class="loading">Загружаем прогноз…</div>';modal.classList.add('open');
- let mine=null;try{const d=await window.api(`/api/predictions/matches/${id}/mine`);mine=d.prediction}catch{}
+ let mine=null;try{const d=await window.GTS.api(`/api/predictions/matches/${id}/mine`);mine=d.prediction}catch{}
  const started=new Date(m.kickoff_at)<=new Date(),live=m.status_group==='live',finished=m.status_group==='finished',p=mine;
  const head=`<div class="sheet-round">${esc(m.round||'Лига чемпионов')} · ${fmt(m.kickoff_at)}</div><div class="sheet-teams"><div class="sheet-team">${team(m.home)}</div><div class="vs">VS</div><div class="sheet-team">${team(m.away)}</div></div>`;
  if(finished){const pts=p?.points;box.innerHTML=head+`<div class="prediction-result"><div class="meta">Итоговый счёт</div><div class="actual">${m.home.goals??'–'}:${m.away.goals??'–'}</div>${p?`<div class="mine">Твой прогноз: <b>${p.home_score}:${p.away_score}</b></div><div class="points ${pts===0?'zero':''}">${pts===3?'Точный счёт · +3':pts===1?'Верный исход · +1':'0 очков'}</div>`:'<div class="mine">Ты не сделал прогноз на этот матч</div>'}</div><button class="save secondary" onclick="openMatchParticipants(${id})">👥 Прогнозы участников</button><button class="close" onclick="closeSheet()">Закрыть</button>`;return}
