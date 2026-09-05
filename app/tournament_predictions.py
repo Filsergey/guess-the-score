@@ -99,6 +99,20 @@ async def _competition_teams(db,provider,season):
  teams=await _competition_team_models(db,provider,season)
  return [{'id':t.id,'provider_id':t.provider_id,'uefa_id':t.uefa_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
 
+@router.get('/mapping-status')
+async def mapping_status(provider:str='sstats',season:int=2026,db:AsyncSession=Depends(get_db)):
+ matches=await _main_stage_matches(db,provider,season)
+ ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
+ sstats_teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all() if ids else []
+ matched=await _competition_team_models(db,provider,season)
+ matched_ids={t.id for t in matched};matched_uefa_ids={t.uefa_id for t in matched if t.uefa_id is not None}
+ season_year=season+1 if season<2100 else season
+ try:uefa_teams=await UEFAProvider().competition_teams(1,season_year)
+ except Exception as exc:raise HTTPException(502,f'UEFA mapping diagnostics failed: {type(exc).__name__}')
+ unmatched_sstats=[{'sstats_id':t.provider_id,'name':t.name,'source_name':getattr(t,'source_name',None),'code':t.code} for t in sstats_teams if t.id not in matched_ids]
+ unmatched_uefa=[{'uefa_id':u.id,'name':u.name_ru or u.name,'international_name':u.international_name,'code':u.code} for u in uefa_teams if u.id not in matched_uefa_ids]
+ return {'competition':'UEFA Champions League','season':season,'uefa_season_year':season_year,'uefa_total':len(uefa_teams),'sstats_main_stage_total':len(sstats_teams),'matched':len(matched),'unmatched_sstats_count':len(unmatched_sstats),'unmatched_uefa_count':len(unmatched_uefa),'unmatched_sstats':unmatched_sstats,'unmatched_uefa':unmatched_uefa}
+
 @router.get('/options/teams')
 async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  del user;items=await _competition_teams(db,provider,season);items.sort(key=lambda x:x['display_name']);return {'count':len(items),'response':items}
