@@ -17,6 +17,7 @@ from app.tournament_predictions import _competition_team_models
 router = APIRouter(tags=["players"])
 settings = get_settings()
 CATALOG_REFRESH_DAYS = 7
+DEFAULT_UCL_SEASON = 2026
 POPULAR_TOKENS = ("mbappe","мбаппе","kane","кейн","haaland","холанд","yamal","ямаль","vinicius","винисиус","dembele","дембеле","saka","сака","bellingham","беллингем","pedri","педри","wirtz","вирц","musiala","мусиала","lautaro","лаутаро","raphinha","рафинья")
 
 def _pick(data: dict,*names: str,default=None):
@@ -95,19 +96,25 @@ async def _player_rows(db,q,popular,limit):
         if rows:return rows
     return (await db.execute(base.order_by(Player.is_popular.desc(),Player.name).limit(limit))).all()
 
+async def _ucl_teams(db:AsyncSession,season:int=DEFAULT_UCL_SEASON)->list[Team]:
+    teams=await _competition_team_models(db,"sstats",season)
+    return [t for t in teams if t.provider=="sstats" and t.provider_id is not None]
+
 async def ensure_sstats_player_catalog(db:AsyncSession)->dict:
-    """Fill an empty SStats player catalogue immediately instead of waiting for startup warmup."""
-    active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True)))).scalar_one()
-    if active:return {"loaded":False,"active":active}
-    teams=(await db.execute(select(Team).where(Team.provider=="sstats").order_by(Team.id))).scalars().all();processed=saved=0;errors=[]
+    """Fill an empty UCL SStats player catalogue without syncing qualification-only teams."""
+    teams=await _ucl_teams(db,DEFAULT_UCL_SEASON)
+    team_ids={t.provider_id for t in teams}
+    active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True),Player.team_provider_id.in_(team_ids)))).scalar_one() if team_ids else 0
+    if active:return {"loaded":False,"scope":"ucl_main_stage","teams":len(teams),"active":active}
+    processed=saved=0;errors=[]
     for team in teams:
         try:
-            result=await sync_sstats_team_players(db,team);processed+=1;saved+=result["saved"]
+            result=await sync_sstats_team_players(db,team,DEFAULT_UCL_SEASON);processed+=1;saved+=result["saved"]
         except Exception as exc:
             await db.rollback()
             if len(errors)<10:errors.append({"team":team.name,"type":type(exc).__name__})
-    active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True)))).scalar_one()
-    return {"loaded":True,"teams_processed":processed,"saved":saved,"active":active,"errors":errors}
+    active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True),Player.team_provider_id.in_(team_ids)))).scalar_one() if team_ids else 0
+    return {"loaded":True,"scope":"ucl_main_stage","teams_processed":processed,"saved":saved,"active":active,"errors":errors}
 
 @router.get("/api/players")
 async def list_players(q:str|None=Query(default=None,max_length=100),popular:bool=False,limit:int=Query(default=30,ge=1,le=100),user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
@@ -121,9 +128,9 @@ async def player_catalog_status(db:AsyncSession=Depends(get_db)):
     total=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats"))).scalar_one();active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True)))).scalar_one();with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_source_url.is_not(None)))).scalar_one();with_blob=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_data.is_not(None)))).scalar_one();return {"provider":"sstats","total":total,"active":active,"with_photo_source":with_source,"with_photo_blob":with_blob}
 
 @router.get("/api/players/ucl-status",include_in_schema=False)
-async def ucl_player_catalog_status(season:int=Query(default=2026,ge=2020,le=2100),db:AsyncSession=Depends(get_db)):
-    teams=await _competition_team_models(db,"sstats",season)
-    team_ids={t.provider_id for t in teams if t.provider=="sstats" and t.provider_id is not None}
+async def ucl_player_catalog_status(season:int=Query(default=DEFAULT_UCL_SEASON,ge=2020,le=2100),db:AsyncSession=Depends(get_db)):
+    teams=await _ucl_teams(db,season)
+    team_ids={t.provider_id for t in teams}
     players=(await db.execute(select(Player).where(Player.provider=="sstats",Player.is_active.is_(True),Player.team_provider_id.in_(team_ids)))).scalars().all() if team_ids else []
     by_team={tid:[] for tid in team_ids}
     for player in players:
@@ -148,16 +155,18 @@ async def player_photo(player_id:int,db:AsyncSession=Depends(get_db)):
     raise HTTPException(404,"Player photo not found")
 
 @router.post("/api/admin/players/sync")
-async def sync_catalog(limit_teams:int|None=Query(default=None,ge=1,le=100),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
+async def sync_catalog(season:int=Query(default=DEFAULT_UCL_SEASON,ge=2020,le=2100),limit_teams:int|None=Query(default=None,ge=1,le=36),x_admin_token:str|None=Header(default=None),db:AsyncSession=Depends(get_db)):
     if not settings.admin_sync_token:raise HTTPException(503,"ADMIN_SYNC_TOKEN is not configured")
     if x_admin_token!=settings.admin_sync_token:raise HTTPException(401,"Invalid admin token")
-    q=select(Team).where(Team.provider=="sstats").order_by(Team.id)
-    if limit_teams is not None:q=q.limit(limit_teams)
-    teams=(await db.execute(q)).scalars().all();results=[]
+    teams=await _ucl_teams(db,season)
+    if limit_teams is not None:teams=teams[:limit_teams]
+    results=[]
     for team in teams:
-        try:results.append(await sync_sstats_team_players(db,team))
+        try:results.append(await sync_sstats_team_players(db,team,season))
         except Exception as e:await db.rollback();results.append({"team_id":team.provider_id,"team":team.name,"error":type(e).__name__})
-    total=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats"))).scalar_one();return {"provider":"sstats","teams_processed":len(results),"total_players":total,"results":results}
+    team_ids={t.provider_id for t in teams}
+    total=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True),Player.team_provider_id.in_(team_ids)))).scalar_one() if team_ids else 0
+    return {"provider":"sstats","scope":"ucl_main_stage","season":season,"teams_available":len(await _ucl_teams(db,season)),"teams_processed":len(results),"active_players_in_processed_teams":total,"results":results}
 
 async def _team_catalog_needs_refresh(db:AsyncSession,team:Team)->bool:
     rows=(await db.execute(select(Player.updated_at).where(Player.provider=="sstats",Player.team_provider_id==team.provider_id,Player.is_active.is_(True)))).scalars().all()
@@ -171,9 +180,9 @@ async def bootstrap_popular_players():
     from app.database import SessionLocal
     try:
         async with SessionLocal() as db:
-            teams=(await db.execute(select(Team).where(Team.provider=="sstats").order_by(Team.id))).scalars().all()
+            teams=await _ucl_teams(db,DEFAULT_UCL_SEASON)
             for team in teams:
                 try:
-                    if await _team_catalog_needs_refresh(db,team):await sync_sstats_team_players(db,team);await asyncio.sleep(.1)
+                    if await _team_catalog_needs_refresh(db,team):await sync_sstats_team_players(db,team,DEFAULT_UCL_SEASON);await asyncio.sleep(.1)
                 except Exception:await db.rollback()
     except Exception:return
