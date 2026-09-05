@@ -12,7 +12,7 @@ from app.competitions.champions_league import classify_ucl_round
 from app.config import get_settings
 from app.database import engine, get_db
 from app.leagues import router as leagues_router
-from app.localization import normalize_team_name, round_name_ru, team_name_ru
+from app.localization import normalize_team_name, round_name_ru, team_logo_url, team_name_ru
 from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
 from app.oracle import router as oracle_router
@@ -34,7 +34,7 @@ async def lifespan(_:FastAPI):
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.13.1',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.13.2',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/oracle-ui.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=1"></script><script src="/static/leaderboard-me.js?v=1"></script><script src="/static/tournament-prediction.js?v=6"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
@@ -48,7 +48,7 @@ async def _logo_catalog(db):
   if key and key not in catalog:catalog[key]=t.logo_url
  return catalog
 def serialize_match(m,h,a,logos=None):
- logos=logos or {};c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':h.logo_url or logos.get(normalize_team_name(h.name)),'goals':m.home_goals},'away':{'id':a.id,'provider_id':a.provider_id,'provider':a.provider,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':a.logo_url or logos.get(normalize_team_name(a.name)),'goals':m.away_goals}}
+ logos=logos or {};c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);home_logo=team_logo_url(h.name,h.logo_url or logos.get(normalize_team_name(h.name)));away_logo=team_logo_url(a.name,a.logo_url or logos.get(normalize_team_name(a.name)));return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':home_logo,'goals':m.home_goals},'away':{'id':a.id,'provider_id':a.provider_id,'provider':a.provider,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':away_logo,'goals':m.away_goals}}
 def _first_item(p):
  d=p.get('data') or p.get('response') or [];return (d[0] if d else {}) if isinstance(d,list) else (d if isinstance(d,dict) else {})
 def _v(d,n):return d.get(n[:1].lower()+n[1:],d.get(n))
