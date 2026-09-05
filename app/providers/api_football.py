@@ -55,10 +55,14 @@ class APIFootballProvider:
         return await self._get("teams", {"search": name})
 
     async def search_players(self, name: str, season: int = 2024) -> dict:
-        """Resolve player profile metadata, including photo, by name.
-
-        This is intentionally a targeted lookup rather than a league-wide player
-        crawl so the application's small API-Football quota is not burned on UI
-        autocomplete requests.
-        """
+        """Resolve player profile metadata, including photo, by name."""
         return await self._get("players", {"search": name, "season": season})
+
+    async def get_squad(self, team_id: int) -> dict:
+        """Return the team's current registered squad in one request.
+
+        This endpoint is preferred for the tournament player picker because it
+        provides current player ids, positions and photo URLs without a season
+        lookup and avoids ambiguous same-name search results.
+        """
+        return await self._get("players/squads", {"team": team_id})
