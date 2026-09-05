@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -84,3 +84,33 @@ class Prediction(Base):
 
     user: Mapped[User] = relationship()
     match: Mapped[Match] = relationship()
+
+
+class UserLeague(Base):
+    __tablename__ = "user_leagues"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    invite_code: Mapped[str] = mapped_column(String(12), unique=True, index=True)
+    owner_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    tournament_provider: Mapped[str] = mapped_column(String(32), default="sstats")
+    tournament_season: Mapped[int] = mapped_column(Integer, default=2026, index=True)
+    is_private: Mapped[bool] = mapped_column(Boolean, default=True)
+    include_oracle: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    owner: Mapped[User] = relationship()
+
+
+class LeagueMember(Base):
+    __tablename__ = "league_members"
+    __table_args__ = (UniqueConstraint("league_id", "user_id", name="uq_league_members_league_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(32), default="member", index=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    league: Mapped[UserLeague] = relationship()
+    user: Mapped[User] = relationship()
