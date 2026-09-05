@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.database import SessionLocal, engine, get_db
 from app.leagues import router as leagues_router
 from app.localization import round_name_ru, team_name_ru
+from app.match_status import status_group, status_label_ru
 from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
 from app.oracle import router as oracle_router
@@ -51,7 +52,7 @@ async def lifespan(_:FastAPI):
    if task:task.cancel();
    if task:
     with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.18.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.19.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
@@ -61,7 +62,7 @@ def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
 def serialize_match(m,h,a):
- c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'stage':c['stage'] if c else None,'matchday':c.get('matchday') if c else None,'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':f'/api/team-logo/db/{h.id}','goals':m.home_goals},'away':{'id':a.id,'provider':a.provider,'provider_id':a.provider_id,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':f'/api/team-logo/db/{a.id}','goals':m.away_goals}}
+ c=classify_ucl_round(m.season,m.kickoff_at) if m.provider=='sstats' else None;r=m.round_name or (c['round_label'] if c else None);return {'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'round':round_name_ru(r),'stage':c['stage'] if c else None,'matchday':c.get('matchday') if c else None,'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'status_group':status_group(m.status_short),'status_label':status_label_ru(m.status_short),'elapsed':m.elapsed,'home':{'id':h.id,'provider':h.provider,'provider_id':h.provider_id,'name':team_name_ru(h.name),'name_original':h.name,'code':h.code,'logo':f'/api/team-logo/db/{h.id}','goals':m.home_goals},'away':{'id':a.id,'provider':a.provider,'provider_id':a.provider_id,'name':team_name_ru(a.name),'name_original':a.name,'code':a.code,'logo':f'/api/team-logo/db/{a.id}','goals':m.away_goals}}
 def _first_item(p):
  d=p.get('data') or p.get('response') or [];return (d[0] if d else {}) if isinstance(d,list) else (d if isinstance(d,dict) else {})
 def _v(d,n):return d.get(n[:1].lower()+n[1:],d.get(n))
@@ -72,7 +73,7 @@ def serialize_sstats_details(d,g=None):
 async def health():return {'status':'ok','service':settings.app_name,'environment':settings.app_env}
 @app.get('/api/sync/status',include_in_schema=False)
 async def public_sync_status(db:AsyncSession=Depends(get_db)):
- season=_current_sstats_season();matches=(await db.execute(select(Match).where(Match.provider=='sstats',Match.season==season))).scalars().all();main=[m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None];return {'provider':'sstats','season':season,'automatic':True,'interval_seconds':AUTO_SYNC_INTERVAL_SECONDS,'running':sync_runtime['running'],'last_started_at':sync_runtime['last_started_at'],'last_finished_at':sync_runtime['last_finished_at'],'last_error':sync_runtime['last_error'],'matches_in_db':len(matches),'main_stage_matches':len(main),'status_counts':dict(sorted(Counter(m.status_short for m in main).items()))}
+ season=_current_sstats_season();matches=(await db.execute(select(Match).where(Match.provider=='sstats',Match.season==season))).scalars().all();main=[m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None];return {'provider':'sstats','season':season,'automatic':True,'interval_seconds':AUTO_SYNC_INTERVAL_SECONDS,'running':sync_runtime['running'],'last_started_at':sync_runtime['last_started_at'],'last_finished_at':sync_runtime['last_finished_at'],'last_error':sync_runtime['last_error'],'matches_in_db':len(matches),'main_stage_matches':len(main),'status_counts':dict(sorted(Counter(m.status_short for m in main).items())),'status_groups':dict(sorted(Counter(status_group(m.status_short) for m in main).items()))}
 @app.get('/api/admin/sstats/leagues')
 async def sstats_leagues(x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_leagues()
 @app.get('/api/admin/sstats/games')
@@ -92,13 +93,14 @@ async def sync_metadata(limit:int|None=Query(default=None,ge=1,le=500),x_admin_t
  try:return await sync_sstats_team_metadata(db,limit)
  except Exception as e:await db.rollback();raise HTTPException(502,f'SStats team metadata sync failed: {type(e).__name__}')
 @app.get('/api/matches')
-async def matches(season:int|None=Query(default=None,ge=2020,le=2100),provider:str|None=Query(default=None),status:str|None=Query(default=None),main_stage:bool=True,db:AsyncSession=Depends(get_db)):
+async def matches(season:int|None=Query(default=None,ge=2020,le=2100),provider:str|None=Query(default=None),status:str|None=Query(default=None),group:str|None=Query(default=None,pattern='^(live|upcoming|finished|cancelled)$'),main_stage:bool=True,db:AsyncSession=Depends(get_db)):
  h,a=aliased(Team),aliased(Team);q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).order_by(Match.kickoff_at)
  if season is not None:q=q.where(Match.season==season)
  if provider is not None:q=q.where(Match.provider==provider)
  if status is not None:q=q.where(Match.status_short==status.upper())
  rows=(await db.execute(q)).all()
  if main_stage:rows=[r for r in rows if r[0].provider!='sstats' or classify_ucl_round(r[0].season,r[0].kickoff_at) is not None]
+ if group is not None:rows=[r for r in rows if status_group(r[0].status_short)==group]
  return {'count':len(rows),'response':[serialize_match(*r) for r in rows]}
 async def _match_row(mid,db):
  h,a=aliased(Team),aliased(Team);return (await db.execute(select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.id==mid))).first()
