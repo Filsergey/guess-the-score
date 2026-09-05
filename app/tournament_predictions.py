@@ -63,30 +63,25 @@ async def _competition_team_models(db,provider,season):
  if not ids:return []
  teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
  if provider!='sstats':return teams
-
  season_year=season+1 if season<2100 else season
  try:uefa_teams=await UEFAProvider().competition_teams(1,season_year)
  except Exception:return [t for t in teams if t.uefa_id is not None]
-
- by_name={}
- code_candidates={}
+ by_name={};code_candidates={}
  for u in uefa_teams:
-  for candidate in (u.international_name,u.name_ru,u.name):
+  candidates=[u.international_name,u.name_ru,u.name]
+  candidates.extend(getattr(u,'aliases',()) or ())
+  for candidate in candidates:
    key=_norm(candidate)
    if key:by_name[key]=u
   code=_norm_code(u.code)
   if code:code_candidates.setdefault(code,[]).append(u)
  by_code={code:rows[0] for code,rows in code_candidates.items() if len(rows)==1}
-
  eligible=[];changed=False
  for t in teams:
   u=None
-  # Prefer names because they are the strongest join key.
   for candidate in (getattr(t,'source_name',None),t.name):
    key=_norm(candidate)
    if key and key in by_name:u=by_name[key];break
-  # Some SStats/UEFA names differ substantially (for example localized or
-  # sponsor-less names). Fall back to a unique club code when available.
   if not u:
    code=_norm_code(t.code)
    if code:u=by_code.get(code)
@@ -111,8 +106,7 @@ async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(g
 @router.get('/options/players')
 async def player_options(q:str|None=Query(default=None,max_length=80),provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  del user
- teams=await _competition_team_models(db,provider,season)
- team_provider_ids={t.provider_id for t in teams if t.provider=='sstats'}
+ teams=await _competition_team_models(db,provider,season);team_provider_ids={t.provider_id for t in teams if t.provider=='sstats'}
  stmt=select(Player).where(Player.provider=='sstats',Player.is_active.is_(True))
  if team_provider_ids:stmt=stmt.where(Player.team_provider_id.in_(team_provider_ids))
  else:stmt=stmt.where(False)
