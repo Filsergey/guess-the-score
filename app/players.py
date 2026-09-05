@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -23,6 +23,7 @@ POPULAR_NAMES = {
     'Bukayo Saka','Raphinha','Julian Alvarez','Jude Bellingham','Pedri','Florian Wirtz','Jamal Musiala','Lautaro Martinez'
 }
 POPULAR_TOKENS = ('mbappe','kane','haaland','yamal','vinicius','dembele','saka','raphinha','alvarez','bellingham','pedri','wirtz','musiala','lautaro')
+CATALOG_REFRESH_DAYS = 7
 
 POSITION_RU = {
     'Goalkeeper':'Вратарь','Defender':'Защитник','Midfielder':'Полузащитник','Attacker':'Нападающий',
@@ -41,6 +42,12 @@ def _is_popular(name: str) -> bool:
     return name in POPULAR_NAMES or any(token in low for token in POPULAR_TOKENS)
 
 
+def current_uefa_season_year(now: datetime | None = None) -> int:
+    """UEFA uses the ending calendar year for a season: 2026/27 -> 2027."""
+    now = now or datetime.now(timezone.utc)
+    return now.year + 1 if now.month >= 7 else now.year
+
+
 async def _download_photo(client:httpx.AsyncClient,url:str|None)->tuple[bytes|None,str|None]:
     if not url or not url.startswith('https://'):
         return None,None
@@ -57,7 +64,7 @@ async def _download_photo(client:httpx.AsyncClient,url:str|None)->tuple[bytes|No
 async def sync_uefa_team_players(
     db:AsyncSession,
     team:UEFATeam,
-    season_year:int=2027,
+    season_year:int,
     download_photos:bool=True,
 )->dict:
     provider=UEFAProvider()
@@ -111,14 +118,13 @@ async def sync_uefa_team_players(
                 photos+=1
         saved+=1
 
-    # Players removed from the current UEFA squad remain in the catalogue for
-    # history, but are not offered as active picks for this club/season.
     if active_ids:
         stale=(
             await db.execute(
                 select(Player).where(
                     Player.provider=='uefa',
                     Player.team_provider_id==team.id,
+                    Player.season==season_year,
                     Player.is_active.is_(True),
                     Player.provider_id.not_in(active_ids),
                 )
@@ -206,7 +212,6 @@ async def player_catalog_status(db:AsyncSession=Depends(get_db)):
 
 @router.get('/api/players/uefa-check',include_in_schema=False)
 async def uefa_provider_check(team_id:int=Query(default=50080,ge=1)):
-    """Safe diagnostic for the UEFA squad scraper. No credentials are used."""
     try:
         rows,diagnostic=await UEFAProvider().squad(team_id)
     except Exception as e:
@@ -230,7 +235,6 @@ async def uefa_provider_check(team_id:int=Query(default=50080,ge=1)):
 
 @router.get('/api/players/provider-check',include_in_schema=False)
 async def legacy_api_football_provider_check(team_id:int=Query(default=529,ge=1)):
-    """Temporary legacy diagnostic kept while API-Football is suspended."""
     try:
         payload=await APIFootballProvider().get_squad(team_id)
     except Exception as e:
@@ -254,6 +258,23 @@ async def legacy_api_football_provider_check(team_id:int=Query(default=529,ge=1)
     return {'ok':True,'team_id':team_id,'team':team.get('name'),'response_count':len(response),'players':len(rows),'with_photo':with_photo,'sample':sample}
 
 
+async def _refresh_player_from_uefa_if_needed(db:AsyncSession, player:Player) -> None:
+    if player.provider!='uefa' or not player.team_provider_id:
+        return
+    if player.photo_source_url and player.team_name and player.position and player.nationality:
+        return
+
+    season_year=player.season or current_uefa_season_year()
+    try:
+        teams=await UEFAProvider().competition_teams(1,season_year)
+        team=next((item for item in teams if item.id==player.team_provider_id),None)
+        if team:
+            await sync_uefa_team_players(db,team,season_year,False)
+            await db.refresh(player)
+    except Exception:
+        await db.rollback()
+
+
 @router.get('/api/players/{player_id}/photo',include_in_schema=False)
 async def player_photo_from_db(player_id:int,db:AsyncSession=Depends(get_db)):
     player=await db.get(Player,player_id)
@@ -265,6 +286,9 @@ async def player_photo_from_db(player_id:int,db:AsyncSession=Depends(get_db)):
             media_type=player.photo_media_type or 'image/jpeg',
             headers={'Cache-Control':'public, max-age=604800, immutable'},
         )
+
+    await _refresh_player_from_uefa_if_needed(db,player)
+
     if player.photo_source_url:
         async with httpx.AsyncClient(timeout=8.0,follow_redirects=True) as client:
             data,ctype=await _download_photo(client,player.photo_source_url)
@@ -326,29 +350,62 @@ async def sync_players_catalog(
     }
 
 
-async def bootstrap_popular_players()->None:
-    """Best-effort bootstrap of the four most useful clubs after deployment.
+async def _team_catalog_needs_refresh(db:AsyncSession,team_id:int,season_year:int)->bool:
+    row=(
+        await db.execute(
+            select(
+                func.count(Player.id),
+                func.max(Player.updated_at),
+                func.count(Player.id).filter(
+                    or_(
+                        Player.team_name.is_(None),
+                        Player.position.is_(None),
+                        Player.nationality.is_(None),
+                        Player.photo_source_url.is_(None),
+                    )
+                ),
+            ).where(
+                Player.provider=='uefa',
+                Player.team_provider_id==team_id,
+                Player.season==season_year,
+                Player.is_active.is_(True),
+            )
+        )
+    ).one()
+    count,last_updated,incomplete=row
+    if count < 10 or incomplete:
+        return True
+    if last_updated is None:
+        return True
+    if last_updated.tzinfo is None:
+        last_updated=last_updated.replace(tzinfo=timezone.utc)
+    return last_updated < datetime.now(timezone.utc)-timedelta(days=CATALOG_REFRESH_DAYS)
 
-    It only fills metadata/photo URLs; image bytes are downloaded lazily by the
-    photo endpoint or by the explicit admin sync, keeping startup lightweight.
+
+async def bootstrap_popular_players()->None:
+    """Self-heal the UEFA player catalogue after every deployment.
+
+    The app checks all clubs in the current Champions League season. A club is
+    fetched only when its squad is missing, incomplete or older than a week.
+    Metadata and UEFA photo URLs are stored immediately; image bytes are loaded
+    lazily the first time a player photo is requested by the UI.
     """
     from app.database import SessionLocal
 
-    priority=[
-        UEFATeam(50080,'Barcelona','Барселона','ESP',None),
-        UEFATeam(50051,'Real Madrid','Реал','ESP',None),
-        UEFATeam(50037,'Bayern München','Бавария','GER',None),
-        UEFATeam(52919,'Man City','Ман Сити','ENG',None),
-    ]
+    season_year=current_uefa_season_year()
+    try:
+        teams=await UEFAProvider().competition_teams(1,season_year)
+    except Exception:
+        return
+
     try:
         async with SessionLocal() as db:
-            for team in priority:
-                count=(await db.execute(select(func.count(Player.id)).where(Player.provider=='uefa',Player.team_provider_id==team.id,Player.is_active.is_(True)))).scalar_one()
-                with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=='uefa',Player.team_provider_id==team.id,Player.photo_source_url.is_not(None)))).scalar_one()
-                if count>=10 and with_source>=10:
-                    continue
+            for team in teams:
                 try:
-                    await sync_uefa_team_players(db,team,2027,False)
+                    if not await _team_catalog_needs_refresh(db,team.id,season_year):
+                        continue
+                    await sync_uefa_team_players(db,team,season_year,False)
+                    await asyncio.sleep(0.15)
                 except Exception:
                     await db.rollback()
     except Exception:
