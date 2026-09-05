@@ -54,6 +54,7 @@ function decorateControl(control){
 }
 function scan(){var controls=document.querySelectorAll('.tp-player-control');for(var i=0;i<controls.length;i++)decorateControl(controls[i])}
 var observer=new MutationObserver(function(){setTimeout(scan,0)});
-function init(){observer.observe(document.body,{childList:true,subtree:true});scan()}
+function loadPopularPicker(){if(document.getElementById('popularPlayerPicker'))return;var s=document.createElement('script');s.id='popularPlayerPicker';s.src='/static/popular-player-picker.js?v=1';document.body.appendChild(s)}
+function init(){observer.observe(document.body,{childList:true,subtree:true});scan();loadPopularPicker();window.addEventListener('player-picked',function(){setTimeout(scan,0)})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
