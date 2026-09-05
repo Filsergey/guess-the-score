@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.auth import get_current_user
 from app.config import get_settings
@@ -89,7 +90,7 @@ async def sync_team_players(db: AsyncSession, team_name: str, team_id: int, down
         if idx < len(photo_results):
             data, ctype = photo_results[idx]
             if data:
-                p.photo_data = data; p.photo_media_type = ctype; photos += 1
+                p.photo_data = data; p.photo_media_type = ctype; p.has_photo = True; photos += 1
         saved += 1
     await db.commit()
     return {'team':actual_team_name,'team_id':team_id,'received':len(valid_rows),'saved':saved,'photos':photos}
@@ -104,7 +105,7 @@ async def list_players(
     db: AsyncSession = Depends(get_db),
 ):
     del user
-    stmt = select(Player).where(Player.is_active.is_(True))
+    stmt = select(Player).options(defer(Player.photo_data)).where(Player.is_active.is_(True))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(Player.name.ilike(like), Player.display_name.ilike(like), Player.team_name.ilike(like)))
@@ -116,8 +117,8 @@ async def list_players(
     return {'count':len(rows),'response':[{
         'id':p.id,'provider_id':p.provider_id,'name':p.name,'display_name':p.display_name or p.name,
         'team':team_name_ru(p.team_name) if p.team_name else None,'team_original':p.team_name,
-        'position':p.position,'photo':f'/api/players/{p.id}/photo' if p.photo_data else None,
-        'has_photo':bool(p.photo_data),'popular':p.is_popular,
+        'position':p.position,'photo':f'/api/players/{p.id}/photo' if p.has_photo else None,
+        'has_photo':p.has_photo,'popular':p.is_popular,
     } for p in rows]}
 
 
@@ -149,23 +150,30 @@ async def sync_players_catalog(
         except Exception as e:
             await db.rollback(); results.append({'team':name,'team_id':team_id,'error':type(e).__name__})
     total = (await db.execute(select(func.count(Player.id)))).scalar_one()
-    with_photo = (await db.execute(select(func.count(Player.id)).where(Player.photo_data.is_not(None)))).scalar_one()
+    with_photo = (await db.execute(select(func.count(Player.id)).where(Player.has_photo.is_(True)))).scalar_one()
     return {'teams_processed':len(results),'offset':offset,'next_offset':offset+len(results),'total_players':total,'players_with_photo':with_photo,'results':results}
 
 
 async def bootstrap_popular_players() -> None:
-    """Warm the local DB once with the clubs most likely to be selected first."""
+    """Warm the DB with popular clubs first, then progressively fill the known catalog."""
     from app.database import SessionLocal
-    priority = [('Barcelona',529),('Real Madrid',541),('Bayern Munich',157),('Manchester City',50)]
+    priority_ids = [529,541,157,50]
+    all_teams = _catalog_team_ids()
+    ordered = [x for tid in priority_ids for x in all_teams if x[1] == tid] + [x for x in all_teams if x[1] not in priority_ids]
     try:
         async with SessionLocal() as db:
-            count = (await db.execute(select(func.count(Player.id)))).scalar_one()
-            if count:
-                return
-            for name, team_id in priority:
+            known_ids = set((await db.execute(select(Player.team_provider_id).where(Player.team_provider_id.is_not(None)).distinct())).scalars().all())
+            for idx, (name, team_id) in enumerate(ordered):
+                if team_id in known_ids:
+                    continue
                 try:
                     await sync_team_players(db, name, team_id, True)
+                    known_ids.add(team_id)
                 except Exception:
                     await db.rollback()
+                if idx >= 3:
+                    await asyncio.sleep(45)
+    except asyncio.CancelledError:
+        raise
     except Exception:
         return
