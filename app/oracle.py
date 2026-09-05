@@ -47,13 +47,31 @@ def _form_xg(h,a):
     return max(.2,min(3.8,(h['gf']+a['ga'])/2*1.08)),max(.2,min(3.8,(a['gf']+h['ga'])/2))
 def _json_text(text):
     t=text.strip();t=t[t.find('{'):t.rfind('}')+1] if '{' in t and '}' in t else t;return json.loads(t)
+def _normalize_web(data):
+    hs=max(0,min(20,int(_num(data.get('home_score')) or 0)));as_=max(0,min(20,int(_num(data.get('away_score')) or 0)))
+    p=data.get('probabilities') if isinstance(data.get('probabilities'),dict) else {}
+    ph=_num(p.get('home'));pd=_num(p.get('draw'));pa=_num(p.get('away'))
+    if all(x is not None and x>=0 for x in (ph,pd,pa)):
+        total=ph+pd+pa
+        if total>0:ph,pd,pa=[round(x*100/total,1) for x in (ph,pd,pa)]
+        else:ph=pd=pa=None
+    else:ph=pd=pa=None
+    confidence=max(0,min(100,int(_num(data.get('confidence')) or (max([x for x in (ph,pd,pa) if x is not None],default=50)))))
+    q=str(data.get('data_quality') or 'medium').lower();q=q if q in ('high','medium','low') else 'medium'
+    def strings(v):return [str(x) for x in v if x] if isinstance(v,list) else []
+    return {'home_score':hs,'away_score':as_,'outcome':'home' if hs>as_ else ('away' if as_>hs else 'draw'),'confidence':confidence,'data_quality':q,'probabilities':{'home':ph,'draw':pd,'away':pa} if ph is not None else None,'reasoning':str(data.get('reasoning') or 'ИИ выполнил веб-исследование матча.'),'form':data.get('form') if isinstance(data.get('form'),dict) else None,'head_to_head':data.get('head_to_head'),'injuries':strings(data.get('injuries')),'key_factors':strings(data.get('key_factors')),'failure_risks':strings(data.get('failure_risks')),'researched_at':data.get('researched_at')}
 async def _web_oracle(match,home,away,local_context):
     if not settings.openai_oracle_enabled or not settings.openai_api_key:return None
     client=AsyncOpenAI(api_key=settings.openai_api_key)
-    prompt=f'''Ты футбольный аналитик приложения «Угадай счёт». Исследуй в интернете матч {home.name} — {away.name}, начало {match.kickoff_at.isoformat()}, сезон {match.season}. Используй свежие и надёжные источники. Найди: последние 5-10 матчей команд во всех турнирах, домашнюю/гостевую форму, последние очные встречи, голы/xG если доступны, травмы/дисквалификации, ожидаемые составы, турнирный контекст и актуальные предматчевые новости. Не выдумывай отсутствующие факты. Наши структурированные данные: {json.dumps(local_context,ensure_ascii=False,default=str)}. На основе совокупности данных дай прогноз точного счёта. Верни ТОЛЬКО JSON: {{"home_score":int,"away_score":int,"confidence":int 0-100,"data_quality":"high|medium|low","probabilities":{{"home":number,"draw":number,"away":number}},"reasoning":"краткое объяснение на русском","form":{{"home":"кратко","away":"кратко"}},"head_to_head":"кратко или нет данных","injuries":["..."],"key_factors":["..."],"failure_risks":["..."],"researched_at":"ISO datetime"}}. Вероятности должны суммироваться примерно в 100.'''
+    prompt=f'''Ты футбольный аналитик приложения «Угадай счёт». Матч: {home.name} — {away.name}. Дата и время: {match.kickoff_at.isoformat()}. Сезон: {match.season}.
+Проведи актуальное веб-исследование ДО того, как выберешь счёт. Найди и сопоставь минимум несколько независимых источников. Приоритет: официальные сайты клубов/турнира, UEFA, крупные спортивные СМИ и надёжные статистические сайты.
+Проверь: 1) последние 5-10 матчей каждой команды во всех турнирах с результатами; 2) домашнюю форму {home.name} и гостевую форму {away.name}; 3) последние очные встречи; 4) забитые/пропущенные, xG/xGA если надёжно доступны; 5) травмы, дисквалификации и сомнительных игроков; 6) ожидаемые составы/ротацию; 7) турнирное положение и мотивацию; 8) свежие новости непосредственно перед матчем; 9) коэффициенты/рыночные вероятности, если доступны.
+Очень важно: не используй сведения о другом матче с похожими командами/датой. Сверь дату и участников. Не выдумывай xG, травмы или статистику. Если чего-то нет — так и учитывай как отсутствие данных. Не вставляй URL или markdown-ссылки внутрь reasoning/key_factors: источники приложение покажет отдельно.
+Наши локальные структурированные данные (могут быть неполными): {json.dumps(local_context,ensure_ascii=False,default=str)}.
+После исследования оцени вероятности 1/X/2 и наиболее вероятный ТОЧНЫЙ счёт. Верни ТОЛЬКО JSON без markdown: {{"home_score":int,"away_score":int,"confidence":int,"data_quality":"high|medium|low","probabilities":{{"home":number,"draw":number,"away":number}},"reasoning":"2-4 предложения по-русски с конкретными найденными фактами, без URL","form":{{"home":"последние результаты/тенденция кратко","away":"последние результаты/тенденция кратко"}},"head_to_head":"кратко","injuries":["конкретные подтверждённые потери или нет подтверждённых данных"],"key_factors":["3-6 конкретных факторов"],"failure_risks":["2-4 риска"],"researched_at":"ISO datetime"}}. Вероятности должны суммироваться до 100.'''
     try:
         r=await client.responses.create(model=settings.openai_oracle_model,tools=[{'type':'web_search'}],tool_choice='auto',include=['web_search_call.action.sources'],input=prompt)
-        data=_json_text(r.output_text);sources=[]
+        data=_normalize_web(_json_text(r.output_text));sources=[]
         for item in r.output:
             if getattr(item,'type',None)=='web_search_call':
                 action=getattr(item,'action',None)
