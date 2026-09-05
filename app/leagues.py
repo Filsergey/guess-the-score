@@ -11,6 +11,7 @@ from sqlalchemy.orm import aliased
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.localization import round_name_ru, team_name_ru
 from app.match_status import FINAL_MATCH_STATUSES
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, User, UserLeague
 from app.predictions import match_is_final, prediction_points
@@ -52,6 +53,11 @@ def _oracle_score(op,m):
     except (ValueError,TypeError,KeyError,json.JSONDecodeError):return None
     return ph,pa,_score_points(ph,pa,m.home_goals,m.away_goals)
 
+async def _eligible_final_matches(db,league,user=None):
+    q=select(Match).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
+    if user is not None:q=q.where(Match.kickoff_at>=user.registered_at)
+    return (await db.execute(q)).scalars().all()
+
 @router.get('/mine')
 async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
     sq=select(LeagueMember.league_id,func.count(LeagueMember.id).label('member_count')).group_by(LeagueMember.league_id).subquery()
@@ -81,31 +87,32 @@ async def league_members(league_id:int,user:User=Depends(get_current_user),db:As
 async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
     membership=await _membership(league_id,user,db);league=await db.get(UserLeague,league_id)
     if league is None:raise HTTPException(404,'League not found')
-    members=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id))).all()
-    result=[]
+    members=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id))).all();result=[]
     for member,u in members:
-        rows=(await db.execute(select(Prediction,Match).join(Match,Prediction.match_id==Match.id).where(Prediction.user_id==u.id,Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.kickoff_at>=u.registered_at))).all()
-        points=outcomes=exacts=submitted=0
-        for p,m in rows:
-            pts=prediction_points(p,m)
+        eligible=await _eligible_final_matches(db,league,u);eligible_ids=[m.id for m in eligible]
+        preds=(await db.execute(select(Prediction).where(Prediction.user_id==u.id,Prediction.match_id.in_(eligible_ids)))).scalars().all() if eligible_ids else []
+        match_by_id={m.id:m for m in eligible};points=outcomes=exacts=submitted=0
+        for p in preds:
+            m=match_by_id.get(p.match_id);pts=prediction_points(p,m) if m else None
             if pts is None:continue
             submitted+=1;points+=pts
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
         correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
-        result.append({'user_id':u.id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'member_role':member.role,'registered_at':u.registered_at,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'is_oracle':False})
+        result.append({'user_id':u.id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'member_role':member.role,'registered_at':u.registered_at,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'eligible_completed_matches':len(eligible),'missed':max(0,len(eligible)-submitted),'accuracy':accuracy,'is_oracle':False})
     if league.include_oracle:
-        oracle_rows=(await db.execute(select(OraclePrediction,Match).join(Match,OraclePrediction.match_id==Match.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season))).all()
+        eligible=await _eligible_final_matches(db,league);eligible_ids=[m.id for m in eligible];match_by_id={m.id:m for m in eligible}
+        ops=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(eligible_ids)))).scalars().all() if eligible_ids else []
         points=outcomes=exacts=submitted=0
-        for op,m in oracle_rows:
-            score=_oracle_score(op,m)
+        for op in ops:
+            m=match_by_id.get(op.match_id);score=_oracle_score(op,m) if m else None
             if score is None:continue
             _,_,pts=score;submitted+=1;points+=pts
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
         correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
-        result.append({'user_id':None,'display_name':'Оракул','username':None,'avatar_url':None,'member_role':'oracle','registered_at':None,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'is_oracle':True})
-    result.sort(key=lambda x:(-x['points'],-x['exacts'],-x['outcomes'],x['display_name'].lower()))
+        result.append({'user_id':None,'display_name':'Оракул','username':None,'avatar_url':None,'member_role':'oracle','registered_at':None,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'eligible_completed_matches':len(eligible),'missed':max(0,len(eligible)-submitted),'accuracy':accuracy,'is_oracle':True})
+    result.sort(key=lambda x:(-x['points'],-x['exacts'],-x['outcomes'],-x['accuracy'],x['display_name'].lower()))
     for i,row in enumerate(result,1):row['place']=i
     return {'league':serialize_league(league,membership.role if membership else 'superadmin',len(members)),'count':len(result),'response':result}
 
@@ -113,8 +120,7 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
 async def participant_history(league_id:int,participant:str,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
     membership=await _membership(league_id,user,db);league=await db.get(UserLeague,league_id)
     if league is None:raise HTTPException(404,'League not found')
-    is_oracle=participant.lower()=='oracle'
-    target=None
+    is_oracle=participant.lower()=='oracle';target=None
     if is_oracle:
         if not league.include_oracle:raise HTTPException(404,'Oracle is not enabled in this league')
     else:
@@ -126,26 +132,21 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
     h,a=aliased(Team),aliased(Team)
     q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
     if target is not None:q=q.where(Match.kickoff_at>=target.registered_at)
-    matches=(await db.execute(q.order_by(Match.kickoff_at.desc()))).all()
-    match_ids=[m.id for m,_,_ in matches]
-    if is_oracle:
-        preds=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
-    else:
-        preds=(await db.execute(select(Prediction).where(Prediction.user_id==target.id,Prediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
-    pred_by_match={p.match_id:p for p in preds}
-    items=[];points=outcomes=exacts=submitted=0
+    matches=(await db.execute(q.order_by(Match.kickoff_at.desc()))).all();match_ids=[m.id for m,_,_ in matches]
+    if is_oracle:preds=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
+    else:preds=(await db.execute(select(Prediction).where(Prediction.user_id==target.id,Prediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
+    pred_by_match={p.match_id:p for p in preds};items=[];points=outcomes=exacts=submitted=0
     for m,home,away in matches:
         p=pred_by_match.get(m.id);ph=pa=pts=None
         if is_oracle:
             score=_oracle_score(p,m)
             if score is not None:ph,pa,pts=score
-        elif p is not None:
-            ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m)
+        elif p is not None:ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m)
         if pts is not None:
             submitted+=1;points+=pts
             if pts==3:exacts+=1
             elif pts==1:outcomes+=1
-        items.append({'match_id':m.id,'kickoff_at':m.kickoff_at,'round':m.round_name,'home':{'name':home.name,'logo':home.logo_url,'goals':m.home_goals},'away':{'name':away.name,'logo':away.logo_url,'goals':m.away_goals},'prediction':{'home_score':ph,'away_score':pa} if pts is not None else None,'points':pts or 0,'submitted':pts is not None})
-    correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0
+        items.append({'match_id':m.id,'kickoff_at':m.kickoff_at,'round':round_name_ru(m.round_name),'home':{'id':home.id,'name':team_name_ru(home.name),'logo':f'/api/team-logo/db/{home.id}','goals':m.home_goals},'away':{'id':away.id,'name':team_name_ru(away.name),'logo':f'/api/team-logo/db/{away.id}','goals':m.away_goals},'prediction':{'home_score':ph,'away_score':pa} if pts is not None else None,'points':pts or 0,'submitted':pts is not None})
+    correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0;missed=max(0,len(items)-submitted)
     participant_data={'user_id':None,'display_name':'Оракул','avatar_url':None,'is_oracle':True} if is_oracle else {'user_id':target.id,'display_name':target.display_name,'avatar_url':target.avatar_url,'is_oracle':False,'registered_at':target.registered_at}
-    return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items)},'count':len(items),'response':items}
+    return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items),'missed':missed},'count':len(items),'response':items}
