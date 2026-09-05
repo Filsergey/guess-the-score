@@ -35,8 +35,30 @@ def _public_https_url(value: str) -> str:
     return value
 
 
-def _norm(value: str) -> str:
-    return ' '.join(value.casefold().replace('.', ' ').replace('-', ' ').split())
+def _norm(value: str | None) -> str:
+    return ' '.join((value or '').casefold().replace('.', ' ').replace('-', ' ').split())
+
+
+def _team_matches(actual: str | None, expected: str | None) -> bool:
+    if not expected:
+        return True
+    a, e = _norm(actual), _norm(expected)
+    if not a or not e:
+        return False
+    aliases = {
+        'барселона': {'barcelona', 'fc barcelona'},
+        'бавария': {'bayern munich', 'bayern münchen', 'fc bayern munich'},
+        'манчестер сити': {'manchester city', 'man city'},
+        'реал мадрид': {'real madrid'},
+        'псж': {'paris saint germain', 'paris saint-germain', 'psg'},
+        'арсенал': {'arsenal'},
+        'атлетико': {'atletico madrid', 'atlético madrid'},
+        'ливерпуль': {'liverpool'},
+        'интер': {'inter', 'inter milan', 'internazionale'},
+    }
+    if a == e or a in e or e in a:
+        return True
+    return a in aliases.get(e, set()) or e in aliases.get(a, set())
 
 
 def _extract_candidates(payload: dict) -> list[dict]:
@@ -46,20 +68,16 @@ def _extract_candidates(payload: dict) -> list[dict]:
         if not isinstance(row, dict):
             continue
         p = row.get('player') if isinstance(row.get('player'), dict) else row
-        pid = p.get('id')
-        name = p.get('name')
-        photo = p.get('photo')
+        pid, name, photo = p.get('id'), p.get('name'), p.get('photo')
         if not pid or not name or not isinstance(photo, str) or not photo.startswith('https://'):
             continue
         stats = row.get('statistics') or []
-        team = None
-        position = None
+        team = position = None
         if isinstance(stats, list) and stats:
             first = stats[0] if isinstance(stats[0], dict) else {}
             t = first.get('team') if isinstance(first.get('team'), dict) else {}
             g = first.get('games') if isinstance(first.get('games'), dict) else {}
-            team = t.get('name')
-            position = g.get('position')
+            team, position = t.get('name'), g.get('position')
         out.append({'id': pid, 'name': str(name), 'photo_src': photo, 'team': team, 'position': position})
     return out
 
@@ -67,106 +85,74 @@ def _extract_candidates(payload: dict) -> list[dict]:
 def _translate_position(value: str | None) -> str | None:
     if not value:
         return value
-    return {
-        'Goalkeeper': 'Вратарь',
-        'Defender': 'Защитник',
-        'Midfielder': 'Полузащитник',
-        'Attacker': 'Нападающий',
-        'Forward': 'Нападающий',
-    }.get(value, value)
+    return {'Goalkeeper':'Вратарь','Defender':'Защитник','Midfielder':'Полузащитник','Attacker':'Нападающий','Forward':'Нападающий','Right Winger':'Нападающий','Left Winger':'Нападающий','Centre-Forward':'Нападающий','Central Midfield':'Полузащитник','Attacking Midfield':'Полузащитник'}.get(value, value)
 
 
-async def _resolve_thesportsdb(name: str) -> dict | None:
+async def _resolve_thesportsdb(name: str, expected_team: str | None = None) -> dict | None:
     try:
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
-            r = await client.get(
-                'https://www.thesportsdb.com/api/v1/json/123/searchplayers.php',
-                params={'p': name.strip()},
-                headers={'User-Agent': 'guess-the-score/1.0'},
-            )
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=True) as client:
+            r = await client.get('https://www.thesportsdb.com/api/v1/json/123/searchplayers.php', params={'p': name.strip()}, headers={'User-Agent': 'guess-the-score/1.0'})
         if r.status_code != 200:
             return None
         payload = r.json()
     except Exception:
         return None
-
     rows = payload.get('player') or []
     if not isinstance(rows, list):
         return None
-    soccer = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        pname = row.get('strPlayer')
-        sport = (row.get('strSport') or '').casefold()
-        if not pname or sport not in {'soccer', 'football'}:
-            continue
-        soccer.append(row)
+    soccer = [x for x in rows if isinstance(x, dict) and x.get('strPlayer') and (x.get('strSport') or '').casefold() in {'soccer','football'}]
     if not soccer:
         return None
-
     key = _norm(name)
-    exact = [x for x in soccer if _norm(str(x.get('strPlayer') or '')) == key]
-    chosen = exact[0] if exact else soccer[0]
+    exact = [x for x in soccer if _norm(x.get('strPlayer')) == key]
+    pool = exact or soccer
+    if expected_team:
+        by_team = [x for x in pool if _team_matches(x.get('strTeam'), expected_team)]
+        if by_team:
+            pool = by_team
+        else:
+            return None
+    chosen = pool[0]
     photo = chosen.get('strThumb') or chosen.get('strCutout') or chosen.get('strRender')
     if not isinstance(photo, str) or not photo.startswith('https://'):
         photo = None
-    return {
-        'found': bool(photo),
-        'id': chosen.get('idPlayer'),
-        'name': chosen.get('strPlayer') or name,
-        'team': chosen.get('strTeam'),
-        'position': _translate_position(chosen.get('strPosition')),
-        'photo': '/api/player-photo?src=' + quote(photo, safe='') if photo else None,
-        'source': 'thesportsdb',
-    }
+    return {'found': bool(photo),'id': chosen.get('idPlayer'),'name': chosen.get('strPlayer') or name,'team': chosen.get('strTeam'),'position': _translate_position(chosen.get('strPosition')),'photo': '/api/player-photo?src=' + quote(photo, safe='') if photo else None,'source': 'thesportsdb'}
 
 
 @router.get('/resolve', include_in_schema=False)
-async def resolve_player_photo(
-    name: str = Query(min_length=3, max_length=100),
-    user: User = Depends(get_current_user),
-):
+async def resolve_player_photo(name: str = Query(min_length=3, max_length=100), team: str | None = Query(default=None, max_length=100), user: User = Depends(get_current_user)):
     del user
-    key = _norm(name)
+    key = _norm(name) + '|' + _norm(team)
     cached = _RESOLVE_CACHE.get(key)
     now = time.time()
     if cached and now - cached[0] < _RESOLVE_TTL_SECONDS:
         return cached[1]
-
-    # Primary source: API-Football, already used by the app. If the free quota
-    # is exhausted or the historical season lookup misses the player, fall
-    # back to TheSportsDB so the picker still has portrait/team/position data.
     try:
         payload = await APIFootballProvider().search_players(name.strip(), season=2024)
         candidates = _extract_candidates(payload)
     except Exception:
         candidates = []
-
     if candidates:
-        exact = [x for x in candidates if _norm(x['name']) == key]
-        chosen = exact[0] if exact else candidates[0]
-        result = {
-            'found': True,
-            'id': chosen['id'],
-            'name': chosen['name'],
-            'team': chosen.get('team'),
-            'position': _translate_position(chosen.get('position')),
-            'photo': '/api/player-photo?src=' + quote(chosen['photo_src'], safe=''),
-            'source': 'api-football',
-        }
-        _RESOLVE_CACHE[key] = (now, result)
-        return result
-
-    fallback = await _resolve_thesportsdb(name)
+        name_key = _norm(name)
+        exact = [x for x in candidates if _norm(x['name']) == name_key]
+        pool = exact or candidates
+        if team:
+            by_team = [x for x in pool if _team_matches(x.get('team'), team)]
+            if by_team:
+                pool = by_team
+            else:
+                pool = []
+        if pool:
+            chosen = pool[0]
+            result = {'found': True,'id': chosen['id'],'name': chosen['name'],'team': chosen.get('team'),'position': _translate_position(chosen.get('position')),'photo': '/api/player-photo?src=' + quote(chosen['photo_src'], safe=''),'source': 'api-football'}
+            _RESOLVE_CACHE[key] = (now, result)
+            return result
+    fallback = await _resolve_thesportsdb(name, team)
     if fallback:
-        # Cache only successful metadata. A temporary provider failure should
-        # not make the generic avatar sticky for the next 24 hours.
         if fallback.get('found') or fallback.get('team') or fallback.get('position'):
             _RESOLVE_CACHE[key] = (now, fallback)
         return fallback
-
-    return {'found': False, 'name': name, 'photo': None, 'team': None, 'position': None}
+    return {'found': False, 'name': name, 'photo': None, 'team': team, 'position': None}
 
 
 @router.get('', include_in_schema=False)
@@ -182,11 +168,7 @@ async def player_photo_proxy(src: str = Query(min_length=8, max_length=1200)):
             raise HTTPException(415, 'Player photo response is not an image')
         if len(r.content) > 5 * 1024 * 1024:
             raise HTTPException(413, 'Player photo is too large')
-        return Response(
-            content=r.content,
-            media_type=content_type.split(';')[0],
-            headers={'Cache-Control': 'public, max-age=604800'},
-        )
+        return Response(content=r.content, media_type=content_type.split(';')[0], headers={'Cache-Control': 'public, max-age=604800'})
     except HTTPException:
         raise
     except Exception:
