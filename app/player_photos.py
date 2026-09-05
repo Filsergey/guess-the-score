@@ -13,8 +13,6 @@ from app.providers.api_football import APIFootballProvider
 
 router = APIRouter(prefix='/api/player-photo', tags=['player-photos'])
 
-# Small in-process cache prevents repeated API-Football lookups when the same
-# saved tournament prediction is opened multiple times.
 _RESOLVE_CACHE: dict[str, tuple[float, dict]] = {}
 _RESOLVE_TTL_SECONDS = 24 * 60 * 60
 
@@ -66,6 +64,64 @@ def _extract_candidates(payload: dict) -> list[dict]:
     return out
 
 
+def _translate_position(value: str | None) -> str | None:
+    if not value:
+        return value
+    return {
+        'Goalkeeper': 'Вратарь',
+        'Defender': 'Защитник',
+        'Midfielder': 'Полузащитник',
+        'Attacker': 'Нападающий',
+        'Forward': 'Нападающий',
+    }.get(value, value)
+
+
+async def _resolve_thesportsdb(name: str) -> dict | None:
+    try:
+        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+            r = await client.get(
+                'https://www.thesportsdb.com/api/v1/json/123/searchplayers.php',
+                params={'p': name.strip()},
+                headers={'User-Agent': 'guess-the-score/1.0'},
+            )
+        if r.status_code != 200:
+            return None
+        payload = r.json()
+    except Exception:
+        return None
+
+    rows = payload.get('player') or []
+    if not isinstance(rows, list):
+        return None
+    soccer = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        pname = row.get('strPlayer')
+        sport = (row.get('strSport') or '').casefold()
+        if not pname or sport not in {'soccer', 'football'}:
+            continue
+        soccer.append(row)
+    if not soccer:
+        return None
+
+    key = _norm(name)
+    exact = [x for x in soccer if _norm(str(x.get('strPlayer') or '')) == key]
+    chosen = exact[0] if exact else soccer[0]
+    photo = chosen.get('strThumb') or chosen.get('strCutout') or chosen.get('strRender')
+    if not isinstance(photo, str) or not photo.startswith('https://'):
+        photo = None
+    return {
+        'found': bool(photo),
+        'id': chosen.get('idPlayer'),
+        'name': chosen.get('strPlayer') or name,
+        'team': chosen.get('strTeam'),
+        'position': _translate_position(chosen.get('strPosition')),
+        'photo': '/api/player-photo?src=' + quote(photo, safe='') if photo else None,
+        'source': 'thesportsdb',
+    }
+
+
 @router.get('/resolve', include_in_schema=False)
 async def resolve_player_photo(
     name: str = Query(min_length=3, max_length=100),
@@ -78,38 +134,46 @@ async def resolve_player_photo(
     if cached and now - cached[0] < _RESOLVE_TTL_SECONDS:
         return cached[1]
 
+    # Primary source: API-Football, already used by the app. If the free quota
+    # is exhausted or the historical season lookup misses the player, fall
+    # back to TheSportsDB so the picker still has portrait/team/position data.
     try:
         payload = await APIFootballProvider().search_players(name.strip(), season=2024)
+        candidates = _extract_candidates(payload)
     except Exception:
-        result = {'found': False, 'name': name, 'photo': None}
+        candidates = []
+
+    if candidates:
+        exact = [x for x in candidates if _norm(x['name']) == key]
+        chosen = exact[0] if exact else candidates[0]
+        result = {
+            'found': True,
+            'id': chosen['id'],
+            'name': chosen['name'],
+            'team': chosen.get('team'),
+            'position': _translate_position(chosen.get('position')),
+            'photo': '/api/player-photo?src=' + quote(chosen['photo_src'], safe=''),
+            'source': 'api-football',
+        }
         _RESOLVE_CACHE[key] = (now, result)
         return result
 
-    candidates = _extract_candidates(payload)
-    if not candidates:
-        result = {'found': False, 'name': name, 'photo': None}
-        _RESOLVE_CACHE[key] = (now, result)
-        return result
+    fallback = await _resolve_thesportsdb(name)
+    if fallback:
+        # Cache only successful metadata. A temporary provider failure should
+        # not make the generic avatar sticky for the next 24 hours.
+        if fallback.get('found') or fallback.get('team') or fallback.get('position'):
+            _RESOLVE_CACHE[key] = (now, fallback)
+        return fallback
 
-    exact = [x for x in candidates if _norm(x['name']) == key]
-    chosen = exact[0] if exact else candidates[0]
-    result = {
-        'found': True,
-        'id': chosen['id'],
-        'name': chosen['name'],
-        'team': chosen.get('team'),
-        'position': chosen.get('position'),
-        'photo': '/api/player-photo?src=' + quote(chosen['photo_src'], safe=''),
-    }
-    _RESOLVE_CACHE[key] = (now, result)
-    return result
+    return {'found': False, 'name': name, 'photo': None, 'team': None, 'position': None}
 
 
 @router.get('', include_in_schema=False)
 async def player_photo_proxy(src: str = Query(min_length=8, max_length=1200)):
     url = _public_https_url(src)
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             r = await client.get(url, headers={'User-Agent': 'guess-the-score/1.0'})
         if r.status_code != 200 or not r.content:
             raise HTTPException(404, 'Player photo not found')
