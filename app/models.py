@@ -94,6 +94,7 @@ class OraclePrediction(Base):
     payload_json: Mapped[str] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(32), default="openai-web", index=True)
     generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     match: Mapped[Match] = relationship()
