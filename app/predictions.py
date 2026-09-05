@@ -7,11 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.database import get_db
+from app.match_status import FINAL_MATCH_STATUSES, is_final_status
 from app.models import Match, Prediction, User
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
-
-FINAL_MATCH_STATUSES = frozenset({"FT", "AET", "PEN", "AWD", "WO"})
 
 
 class PredictionInput(BaseModel):
@@ -24,12 +23,10 @@ def _outcome(home: int, away: int) -> int:
 
 
 def match_is_final(match: Match) -> bool:
-    return (match.status_short or "").upper() in FINAL_MATCH_STATUSES
+    return is_final_status(match.status_short)
 
 
 def prediction_points(prediction: Prediction, match: Match) -> int | None:
-    # Live/half-time scores must never award provisional points. A prediction is
-    # scored only after SStats marks the match as a terminal result.
     if not match_is_final(match) or match.home_goals is None or match.away_goals is None:
         return None
     if prediction.home_score == match.home_goals and prediction.away_score == match.away_goals:
