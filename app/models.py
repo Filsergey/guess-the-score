@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -83,6 +83,19 @@ class Prediction(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user: Mapped[User] = relationship()
+    match: Mapped[Match] = relationship()
+
+
+class OraclePrediction(Base):
+    __tablename__ = "oracle_predictions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), unique=True, index=True)
+    payload_json: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(32), default="openai-web", index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
     match: Mapped[Match] = relationship()
 
 
