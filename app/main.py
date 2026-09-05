@@ -33,7 +33,7 @@ async def lifespan(_:FastAPI):
   if scheduler_task:
    scheduler_task.cancel()
    with suppress(asyncio.CancelledError):await scheduler_task
-app=FastAPI(title=settings.app_name,version='0.12.3',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
+app=FastAPI(title=settings.app_name,version='0.12.4',lifespan=lifespan);app.include_router(auth_router);app.include_router(predictions_router);app.include_router(leagues_router);app.include_router(oracle_router);app.include_router(tournament_predictions_router);app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8')
