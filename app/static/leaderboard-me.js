@@ -5,11 +5,11 @@ const style=document.createElement('style');style.textContent=`
 #leaderboard tbody tr.me-row .player-wrap strong{color:#eef7ff}
 #leaderboard tbody tr.me-row .player-wrap strong::after{content:'  ВЫ';color:#58aaff;font-size:8px;font-weight:900;letter-spacing:.5px}
 #leaderboard .playing-since{display:block;color:#6f91ad;font-size:8px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#leaderboard .coverage-missed{color:#ff8d8d;font-size:8px;display:block;margin-top:2px}
 `;
 document.head.appendChild(style);
 const auth=()=>{const t=localStorage.getItem('access_token')||'';return t?{Authorization:`Bearer ${t}`}:{}};
-const leagueId=()=>localStorage.getItem('selected_league_id');
-let busy=false,last='';
+const leagueId=()=>localStorage.getItem('selected_league_id');let busy=false,last='';
 function dateText(v){if(!v)return '';const d=new Date(v);if(Number.isNaN(d.getTime()))return '';return d.toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'})}
 async function decorate(){
  if(busy)return;const id=leagueId(),rows=[...root.querySelectorAll('tbody tr')];if(!id||!rows.length)return;
@@ -19,10 +19,10 @@ async function decorate(){
   const board=await br.json(),me=await mr.json(),items=board.response||[];if(items.length!==rows.length)return;
   rows.forEach((row,i)=>{
    const x=items[i]||{};row.classList.toggle('me-row',!x.is_oracle&&Number(x.user_id)===Number(me.id));
-   if(x.is_oracle||!x.registered_at)return;
+   const cells=row.querySelectorAll('td');if(cells[5]&&x.eligible_completed_matches!=null){cells[5].textContent=`${x.predictions}/${x.eligible_completed_matches}`;cells[5].title='Подано прогнозов / доступно завершённых матчей'}
    const wrap=row.querySelector('.player-wrap>div');if(!wrap)return;
-   let note=wrap.querySelector('.playing-since');if(!note){note=document.createElement('span');note.className='playing-since';wrap.appendChild(note)}
-   note.textContent=`В игре с ${dateText(x.registered_at)}`;
+   if(!x.is_oracle&&x.registered_at){let note=wrap.querySelector('.playing-since');if(!note){note=document.createElement('span');note.className='playing-since';wrap.appendChild(note)}note.textContent=`В игре с ${dateText(x.registered_at)}`}
+   let missed=wrap.querySelector('.coverage-missed');if(Number(x.missed||0)>0){if(!missed){missed=document.createElement('span');missed.className='coverage-missed';wrap.appendChild(missed)}missed.textContent=`Без прогноза: ${x.missed}`}else missed?.remove();
   });last=key;
  }finally{busy=false}
 }
