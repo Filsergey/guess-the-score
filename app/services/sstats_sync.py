@@ -32,7 +32,7 @@ def _parse_datetime(value) -> datetime:
 def _normalize_status(raw_status, kickoff_at: datetime, home_goals, away_goals) -> tuple[str, str | None]:
     now = datetime.now(timezone.utc)
     raw_text = None if raw_status is None else str(raw_status)
-    status_long = f"SStats status {raw_text}" if raw_text is not None else None
+    status_long = f"SStats status {raw_text}" if raw_status is not None else None
     if kickoff_at > now:
         return "NS", status_long
     has_score = home_goals is not None and away_goals is not None
@@ -57,9 +57,27 @@ def _norm(value: str | None) -> str:
     if not value:
         return ""
     text = value.casefold().replace("&", " and ").replace("’", "'")
+    text = (
+        text.replace("ø", "o").replace("ö", "o").replace("ó", "o").replace("ò", "o").replace("ô", "o")
+        .replace("ü", "u").replace("ú", "u").replace("ä", "a").replace("á", "a").replace("à", "a")
+        .replace("é", "e").replace("è", "e").replace("í", "i").replace("ñ", "n").replace("ç", "c")
+    )
     text = re.sub(r"[^\w\s']+", " ", text, flags=re.UNICODE)
-    tokens = [token for token in text.split() if token not in {"fc", "cf", "afc", "fk", "sc", "ac"}]
-    return " ".join(tokens)
+    tokens = [token for token in text.split() if token not in {"fc", "cf", "afc", "fk", "sc", "ac", "fa"}]
+    normalized = " ".join(tokens)
+    aliases = {
+        "atletico madrid": "atleti",
+        "atletico de madrid": "atleti",
+        "club atletico de madrid": "atleti",
+        "lask linz": "lask",
+        "sabah masazir": "sabah",
+    }
+    return aliases.get(normalized, normalized)
+
+
+def _norm_code(value: str | None) -> str:
+    code = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+    return {"LAS": "LASK"}.get(code, code)
 
 
 def _has_cyrillic(value: str | None) -> bool:
@@ -138,7 +156,7 @@ async def sync_sstats_champions_league(session: AsyncSession, year: int) -> dict
 
 
 async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = None) -> dict:
-    """SStats owns team identity; UEFA adds Russian names and official crests."""
+    """SStats owns team IDs; UEFA enriches current UCL participants with official names, codes and crests."""
     provider = SStatsProvider()
     sstats_rows = _items(await provider.get_teams(limit=1000))
     sstats_by_id = {}
@@ -163,19 +181,33 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
 
     now=datetime.now(timezone.utc); season=now.year+(1 if now.month>=7 else 0)
     uefa_teams=await UEFAProvider().competition_teams(UEFA_CHAMPIONS_LEAGUE_ID,season)
-    by_name={}
+    by_name={}; code_candidates={}
     for uefa in uefa_teams:
-        for candidate in (uefa.international_name,uefa.name_ru,uefa.name):
+        candidates=[uefa.international_name,uefa.name_ru,uefa.name]
+        candidates.extend(getattr(uefa,"aliases",()) or ())
+        for candidate in candidates:
             key=_norm(candidate)
             if key: by_name[key]=uefa
+        code=_norm_code(uefa.code)
+        if code: code_candidates.setdefault(code,[]).append(uefa)
+    by_code={code:rows[0] for code,rows in code_candidates.items() if len(rows)==1}
 
-    updated=unmatched=0; unmatched_names=[]
+    updated=unmatched=0; unmatched_names=[]; matched_uefa_ids=set()
     for team in teams:
-        key=_norm(team.source_name or team.name); uefa=by_name.get(key)
+        uefa=None
+        for candidate in (team.source_name,team.name):
+            key=_norm(candidate)
+            if key and key in by_name:
+                uefa=by_name[key]
+                break
+        if not uefa:
+            code=_norm_code(team.code)
+            if code: uefa=by_code.get(code)
         if not uefa:
             unmatched+=1
             if len(unmatched_names)<40: unmatched_names.append(team.source_name or team.name)
             continue
+        matched_uefa_ids.add(uefa.id)
         team.uefa_id=uefa.id
         if uefa.name_ru: team.name=uefa.name_ru
         if uefa.code: team.code=str(uefa.code)[:20]
@@ -184,4 +216,4 @@ async def sync_sstats_team_metadata(session: AsyncSession, limit: int | None = N
         if logo: team.logo_url=logo
         updated+=1
     await session.commit()
-    return {"provider":"sstats","catalog_source":"sstats:/Teams/list","metadata_source":"uefa-standings","season_year":season,"teams_in_db":len(teams),"sstats_catalog":len(sstats_rows),"uefa_catalog":len(uefa_teams),"updated":updated,"unmatched":unmatched,"unmatched_names":unmatched_names}
+    return {"provider":"sstats","catalog_source":"sstats:/Teams/list","metadata_source":"uefa-standings","season_year":season,"teams_in_db":len(teams),"sstats_catalog":len(sstats_rows),"uefa_catalog":len(uefa_teams),"updated":updated,"uefa_matched":len(matched_uefa_ids),"uefa_unmatched":len(uefa_teams)-len(matched_uefa_ids),"unmatched_non_uefa":unmatched,"unmatched_names":unmatched_names}
