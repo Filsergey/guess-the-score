@@ -53,3 +53,12 @@ class APIFootballProvider:
         preferred because the free API-Football plan has a small daily quota.
         """
         return await self._get("teams", {"search": name})
+
+    async def search_players(self, name: str, season: int = 2024) -> dict:
+        """Resolve player profile metadata, including photo, by name.
+
+        This is intentionally a targeted lookup rather than a league-wide player
+        crawl so the application's small API-Football quota is not burned on UI
+        autocomplete requests.
+        """
+        return await self._get("players", {"search": name, "season": season})
