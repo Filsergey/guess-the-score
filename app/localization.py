@@ -45,10 +45,11 @@ def fallback_team_logo(name: str | None) -> str | None:
     if not name:return None
     team_id=API_FOOTBALL_TEAM_IDS.get(name)
     if team_id is None:return None
-    return f'https://media.api-sports.io/football/teams/{team_id}.png'
+    return f'/api/team-logo/{team_id}'
 
 def team_logo_url(name: str | None, stored_logo: str | None) -> str | None:
-    return stored_logo or fallback_team_logo(name)
+    proxied=fallback_team_logo(name)
+    return proxied or stored_logo
 
 ROUND_NAMES_RU = {
     'League phase':'Этап лиги','Knockout phase play-offs':'Стыковые матчи','Round of 16':'1/8 финала',
