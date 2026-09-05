@@ -12,83 +12,29 @@
 </head>
 <body>
 <main class="app">
-  <div class="top">
-    <div class="select">🏆 Лига чемпионов ▾</div>
-    <div class="select small">👥 Шашлычники ▾</div>
-    <button class="bell">🔔</button>
-  </div>
-
+  <div class="top"><div class="select">🏆 Лига чемпионов ▾</div><div class="select small">👥 Шашлычники ▾</div><button type="button" class="bell">🔔</button></div>
   <div id="profile" class="profile"></div>
-
-  <section class="section">
-    <div class="card tournament">
-      <div><div class="tournament-title">Прогноз на турнир</div><div class="muted" style="font-size:13px;margin-top:5px">Победитель, призёры и лучшие игроки</div></div>
-      <div class="pill">Скоро</div>
-    </div>
-  </section>
-
-  <section class="section">
-    <div class="section-head"><h2>Ближайшие матчи</h2><span class="link">Все матчи</span></div>
-    <div id="matches"><div class="loading">Загружаем матчи…</div></div>
-  </section>
+  <section class="section"><div class="card tournament"><div><div class="tournament-title">Прогноз на турнир</div><div class="muted" style="font-size:13px;margin-top:5px">Победитель, призёры и лучшие игроки</div></div><div class="pill">Скоро</div></div></section>
+  <section class="section"><div class="section-head"><h2>Ближайшие матчи</h2><span class="link">Все матчи</span></div><div id="matches"><div class="loading">Загружаем матчи…</div></div></section>
 </main>
-<nav class="nav"><button class="active">Главная</button><button>Матчи</button><button>Лиги</button><button>Таблица</button><button>Меню</button></nav>
+<nav class="nav"><button type="button" class="active">Главная</button><button type="button">Матчи</button><button type="button">Лиги</button><button type="button">Таблица</button><button type="button">Меню</button></nav>
 <div id="toast" class="toast"></div>
 <script>
-const tg=window.Telegram?.WebApp;
-if(tg){tg.ready();tg.expand();}
-const matchesEl=document.getElementById('matches');
-const profileEl=document.getElementById('profile');
-const toastEl=document.getElementById('toast');
-let token=localStorage.getItem('access_token')||'';
-let myPredictions={};
-
+const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();}
+const matchesEl=document.getElementById('matches'),profileEl=document.getElementById('profile'),toastEl=document.getElementById('toast');
+let token=localStorage.getItem('access_token')||'',myPredictions={},renderedMatches=[];
 function toast(text){toastEl.textContent=text;toastEl.classList.add('show');setTimeout(()=>toastEl.classList.remove('show'),1800)}
 function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
 function logo(team){return team.logo?`<img src="${esc(team.logo)}" alt="">`:`<div class="crest"></div>`}
 function fmt(dt){const d=new Date(dt);return {date:d.toLocaleDateString('ru-RU',{weekday:'long',day:'numeric',month:'long'}),time:d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}}
 async function api(url,opts={}){opts.headers={...(opts.headers||{}),...(token?{Authorization:`Bearer ${token}`}:{})};const r=await fetch(url,opts);let data={};try{data=await r.json()}catch{}if(!r.ok)throw new Error(data.detail||`HTTP ${r.status}`);return data}
-
-async function login(){
-  if(token){try{return await api('/api/auth/me')}catch{localStorage.removeItem('access_token');token=''}}
-  if(!tg?.initData) throw new Error('Открой приложение через кнопку Telegram-бота');
-  const r=await fetch('/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({init_data:tg.initData})});
-  const data=await r.json(); if(!r.ok)throw new Error(data.detail||'Ошибка входа'); token=data.access_token; localStorage.setItem('access_token',token); return api('/api/auth/me');
-}
-
+async function login(){if(token){try{return await api('/api/auth/me')}catch{localStorage.removeItem('access_token');token=''}}if(!tg?.initData)throw new Error('Открой приложение через кнопку Telegram-бота');const r=await fetch('/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({init_data:tg.initData})});const data=await r.json();if(!r.ok)throw new Error(data.detail||'Ошибка входа');token=data.access_token;localStorage.setItem('access_token',token);return api('/api/auth/me')}
 function renderProfile(me){profileEl.innerHTML=`${me.photo_url?`<img class="avatar" src="${esc(me.photo_url)}" alt="">`:'<div class="avatar"></div>'}<div><strong>${esc(me.display_name||me.username||'Игрок')}</strong><span>${me.role==='superadmin'?'superadmin':'игрок'}</span></div>`}
-
-function predictionHtml(match){
-  const p=myPredictions[match.id];
-  const locked=new Date(match.kickoff_at)<=new Date();
-  if(locked){return `<div class="prediction"><div class="pred-state">${p?`Твой прогноз: <b>${p.home_score}:${p.away_score}</b>${p.points!==null?` · +${p.points}`:''}`:'Прогноз не сделан'}</div></div>`}
-  return `<div class="prediction"><div class="pred-row"><input class="score" id="h-${match.id}" type="number" min="0" max="30" value="${p?.home_score??''}" placeholder="0"><span class="dash">:</span><input class="score" id="a-${match.id}" type="number" min="0" max="30" value="${p?.away_score??''}" placeholder="0"><button class="save" onclick="savePrediction(${match.id})">${p?'Изменить':'Сохранить'}</button></div><div class="pred-state" id="s-${match.id}">${p?'Прогноз сохранён':'Прогноза нет'}</div></div>`
-}
-
-function renderMatches(items){
-  const upcoming=items.filter(m=>new Date(m.kickoff_at)>new Date()).slice(0,8);
-  if(!upcoming.length){matchesEl.innerHTML='<div class="card empty">Ближайших матчей пока нет</div>';return}
-  let last='';let html='';
-  for(const m of upcoming){const f=fmt(m.kickoff_at);if(f.date!==last){html+=`<div class="date">${esc(f.date)}</div>`;last=f.date}
-    html+=`<article class="card match"><div class="round">${esc(m.round||'Лига чемпионов')}</div><div class="teams"><div class="team">${logo(m.home)}<div>${esc(m.home.name)}</div></div><div class="time"><strong>${f.time}</strong><span>${m.status==='NS'?'Не начался':esc(m.status)}</span></div><div class="team">${logo(m.away)}<div>${esc(m.away.name)}</div></div></div>${predictionHtml(m)}</article>`}
-  matchesEl.innerHTML=html;
-}
-
-async function savePrediction(id){
-  const h=document.getElementById(`h-${id}`),a=document.getElementById(`a-${id}`),s=document.getElementById(`s-${id}`);
-  if(h.value===''||a.value===''){s.textContent='Укажи оба счёта';s.className='pred-state error';return}
-  try{const p=await api(`/api/predictions/matches/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({home_score:Number(h.value),away_score:Number(a.value)})});myPredictions[id]=p;s.textContent='Прогноз сохранён';s.className='pred-state success';toast('Прогноз сохранён ✓')}catch(e){s.textContent=e.message;s.className='pred-state error'}
-}
+function predictionHtml(match){const p=myPredictions[match.id],locked=new Date(match.kickoff_at)<=new Date();if(locked)return `<div class="prediction"><div class="pred-state">${p?`Твой прогноз: <b>${p.home_score}:${p.away_score}</b>${p.points!==null?` · +${p.points}`:''}`:'Прогноз не сделан'}</div></div>`;return `<div class="prediction"><div class="pred-row"><input class="score" id="h-${match.id}" type="number" min="0" max="30" value="${p?.home_score??''}" placeholder="0"><span class="dash">:</span><input class="score" id="a-${match.id}" type="number" min="0" max="30" value="${p?.away_score??''}" placeholder="0"><button type="button" class="save" id="b-${match.id}" onclick="savePrediction(event,${match.id})">${p?'Изменить':'Сохранить'}</button></div><div class="pred-state ${p?'success':''}" id="s-${match.id}">${p?'Прогноз сохранён':'Прогноза нет'}</div></div>`}
+function renderMatches(items){renderedMatches=items.filter(m=>new Date(m.kickoff_at)>new Date()).slice(0,8);if(!renderedMatches.length){matchesEl.innerHTML='<div class="card empty">Ближайших матчей пока нет</div>';return}let last='',html='';for(const m of renderedMatches){const f=fmt(m.kickoff_at);if(f.date!==last){html+=`<div class="date">${esc(f.date)}</div>`;last=f.date}html+=`<article class="card match" id="match-${m.id}"><div class="round">${esc(m.round||'Лига чемпионов')}</div><div class="teams"><div class="team">${logo(m.home)}<div>${esc(m.home.name)}</div></div><div class="time"><strong>${f.time}</strong><span>${m.status==='NS'?'Не начался':esc(m.status)}</span></div><div class="team">${logo(m.away)}<div>${esc(m.away.name)}</div></div></div>${predictionHtml(m)}</article>`}matchesEl.innerHTML=html}
+async function savePrediction(ev,id){ev?.preventDefault();ev?.stopPropagation();const h=document.getElementById(`h-${id}`),a=document.getElementById(`a-${id}`),s=document.getElementById(`s-${id}`),b=document.getElementById(`b-${id}`),card=document.getElementById(`match-${id}`);if(!h||!a||!s||!card)return;if(h.value===''||a.value===''){s.textContent='Укажи оба счёта';s.className='pred-state error';return}try{b.disabled=true;const p=await api(`/api/predictions/matches/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({home_score:Number(h.value),away_score:Number(a.value)})});myPredictions[id]=p;s.textContent=`Прогноз сохранён: ${p.home_score}:${p.away_score}`;s.className='pred-state success';b.textContent='Изменить';toast('Прогноз сохранён ✓');card.scrollIntoView({block:'nearest'})}catch(e){s.textContent=e.message;s.className='pred-state error'}finally{if(b)b.disabled=false}}
 window.savePrediction=savePrediction;
-
-(async()=>{
- try{
-  const me=await login(); renderProfile(me);
-  const [preds,matches]=await Promise.all([api('/api/predictions/mine'),fetch('/api/matches?season=2026&provider=sstats').then(r=>r.json())]);
-  for(const p of preds.response||[])myPredictions[p.match_id]=p;
-  renderMatches(matches.response||[]);
- }catch(e){matchesEl.innerHTML=`<div class="card empty error">${esc(e.message)}</div>`}
-})();
+(async()=>{try{const me=await login();renderProfile(me);const [preds,matches]=await Promise.all([api('/api/predictions/mine'),fetch('/api/matches?season=2026&provider=sstats').then(r=>r.json())]);for(const p of preds.response||[])myPredictions[p.match_id]=p;renderMatches(matches.response||[])}catch(e){matchesEl.innerHTML=`<div class="card empty error">${esc(e.message)}</div>`}})();
 </script>
 </body>
 </html>
