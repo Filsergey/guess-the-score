@@ -13,7 +13,7 @@ function ensureMeta(name,content){
   el.content=content;return el;
 }
 
-ensureLink('manifest','/static/manifest.webmanifest?v=1');
+ensureLink('manifest','/static/manifest.webmanifest?v=2');
 ensureMeta('apple-mobile-web-app-capable','yes');
 ensureMeta('apple-mobile-web-app-status-bar-style','black-translucent');
 ensureMeta('apple-mobile-web-app-title','Угадай счёт');
@@ -34,7 +34,7 @@ const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(/Macintosh/i.test(na
 const api={standalone,registration:null,ready:null};
 window.GTSPWA=api;
 if('serviceWorker' in navigator){
-  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=1').then(reg=>{
+  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=2').then(reg=>{
     api.registration=reg;
     return reg;
   }).catch(()=>null);
@@ -60,7 +60,7 @@ function installHelp(){
 }
 async function enableNotifications(){
   try{
-    const reg=await api.ready;if(!reg||!('PushManager' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');
+    const reg=await api.ready;if(!reg||!('PushManager' in window)||!('Notification' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');
     const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured||!cfg.public_key)throw new Error('Push-уведомления ещё не настроены на сервере');
     const permission=await Notification.requestPermission();if(permission!=='granted')throw new Error('Разрешение на уведомления не выдано');
     let sub=await reg.pushManager.getSubscription();
@@ -76,7 +76,7 @@ api.enableNotifications=enableNotifications;window.gtsEnableNotifications=enable
 async function refreshNudge(){
   if(!localStorage.getItem('access_token'))return;
   standalone=window.matchMedia?.('(display-mode: standalone)')?.matches||window.navigator.standalone===true;api.standalone=standalone;
-  if(!standalone){if(isIOS&&!sessionStorage.getItem('gts_pwa_install_dismissed'))showNudge('Установить как приложение','Будет открываться отдельно от Safari и сможет получать уведомления.','Как установить',installHelp);return}
+  if(!standalone){if(isIOS)showNudge('Установить как приложение','Будет открываться отдельно от Safari и сможет получать уведомления.','Как установить',installHelp);return}
   if(!('Notification' in window)||!('PushManager' in window)||Notification.permission==='denied')return;
   try{
     const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured)return;
