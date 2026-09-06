@@ -64,12 +64,12 @@ async def lifespan(_:FastAPI):
   for task in tasks:task.cancel()
   for task in tasks:
    with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.33.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.34.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/live-standings.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=4"></script><script src="/static/match-pitch.js?v=2"></script><script src="/static/match-detail.js?v=4"></script><script src="/static/match-feed.js?v=6"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/live-standings.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=4"></script><script src="/static/match-pitch.js?v=2"></script><script src="/static/match-live-cache.js?v=1"></script><script src="/static/match-detail.js?v=4"></script><script src="/static/match-feed.js?v=6"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
@@ -122,24 +122,29 @@ async def match_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  if not r:raise HTTPException(404,'Match not found')
  return serialize_match(*r)
 @app.get('/api/matches/{match_id}/details')
-async def match_rich_detail(match_id:int,db:AsyncSession=Depends(get_db)):
+async def match_rich_detail(match_id:int,live_only:bool=Query(default=False),db:AsyncSession=Depends(get_db)):
  r=await _match_row(match_id,db)
  if not r:raise HTTPException(404,'Match not found')
  m,h,a=r;base=serialize_match(m,h,a)
  if m.provider!='sstats':return {**base,'details_available':False,'details_source':None,'details_errors':[],'details':None}
  p=SStatsProvider();qd={};gd={};full={};gl={};errors=[]
- try:qd=_first_item(await p.query_game_details(m.provider_id))
- except Exception as e:errors.append(f'query:{type(e).__name__}')
+ if not live_only:
+  try:qd=_first_item(await p.query_game_details(m.provider_id))
+  except Exception as e:errors.append(f'query:{type(e).__name__}')
  try:
   raw=await p.get_game(m.provider_id);full=_first_item(raw);gd=full.get('game') if isinstance(full.get('game'),dict) else full
  except Exception as e:errors.append(f'game:{type(e).__name__}')
- try:gl=_first_item(await p.get_glicko(m.provider_id))
- except Exception as e:errors.append(f'glicko:{type(e).__name__}')
+ if not live_only:
+  try:gl=_first_item(await p.get_glicko(m.provider_id))
+  except Exception as e:errors.append(f'glicko:{type(e).__name__}')
  d=_merge(qd,gd) if (qd or gd) else {};rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'player_stats':[],'lineups':{'home':{'formation':None,'coach':None,'starting':[],'bench':[]},'away':{'formation':None,'coach':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
+ if live_only:
+  if not full:return {**base,'details_available':False,'details_source':'games/{id}:live','details_errors':errors,'details':None,'live_only':True}
+  return {**base,'details_available':True,'details_source':'games/{id}:live','details_errors':errors,'details':rich,'live_only':True}
  if not d and not gl and not full:return {**base,'details_available':False,'details_source':None,'details_errors':errors,'details':None}
  details=serialize_sstats_details(d,gl);details.update(rich)
  if rich.get('venue_full') and not details.get('venue',{}).get('name'):details['venue']=rich['venue_full']
  if not details.get('coaches',{}).get('home'):details['coaches']['home']=rich.get('lineups',{}).get('home',{}).get('coach')
  if not details.get('coaches',{}).get('away'):details['coaches']['away']=rich.get('lineups',{}).get('away',{}).get('coach')
  source='games/query' if qd else 'games/{id}';source+='+full' if full else '';source+='+glicko' if gl else ''
- return {**base,'details_available':True,'details_source':source,'details_errors':errors,'details':details}
+ return {**base,'details_available':True,'details_source':source,'details_errors':errors,'details':details,'live_only':False}
