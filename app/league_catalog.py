@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
-from app.services.sstats_sync import sync_sstats_competition
+from app.services.competition_readiness import prepare_sstats_competition_tolerant
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
 
@@ -152,11 +152,11 @@ async def sync_catalog_tournament(
     if configured is None:
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
 
-    # Same simple flow that was used for the full SStats catalog: sync the selected
-    # season's matches and teams, then create the user league. Extra metadata such
-    # as missing logos/player details can be filled by the existing background/on-demand flows.
+    # Wait for the bulk preload: matches, teams, crests and player rosters are all
+    # attempted before the user league is created. A tiny residual gap (roughly 10%,
+    # max two clubs) is allowed and repaired in the background.
     try:
-        result = await sync_sstats_competition(
+        result = await prepare_sstats_competition_tolerant(
             db,
             body.league_id,
             body.year,
@@ -167,15 +167,15 @@ async def sync_catalog_tournament(
         message = _upstream_error_message(exc)
         if len(message) > 500:
             message = message[:497] + "..."
-        raise HTTPException(502, f"Не удалось синхронизировать турнир: {message}") from exc
+        raise HTTPException(502, f"Турнир пока не готов: {message}. Лига не создана.") from exc
 
     tournament_id = result.get("tournament_id")
-    if not tournament_id or int(result.get("received") or 0) <= 0:
-        raise HTTPException(502, "SStats не вернул матчи выбранного турнира и сезона")
+    if not tournament_id or result.get("status") != "ready":
+        raise HTTPException(502, "Турнир подготовлен не полностью. Лига не создана.")
 
     tournament = await db.get(Tournament, int(tournament_id))
     if tournament is None:
-        raise HTTPException(502, "Турнир не найден после синхронизации")
+        raise HTTPException(502, "Турнир не найден после подготовки")
     tournament.name = configured["name"]
     tournament.country = configured["country"]
     tournament.logo_url = f"/api/leagues/tournament-logo/{body.league_id}"
