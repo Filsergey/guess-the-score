@@ -97,7 +97,7 @@ async def mini_app():
   '<script src="/static/match-live-cache.js?v=1"></script>'
   '<script src="/static/match-detail.js?v=6"></script>'
   '<script src="/static/match-detail-safety.js?v=2"></script>'
-  '<script src="/static/modal-hard-close.js?v=3"></script>'
+  '<script src="/static/modal-hard-close.js?v=4"></script>'
   '<script src="/static/match-detail-groups.js?v=1"></script>'
   '<script src="/static/match-feed.js?v=6"></script>'
   '<script src="/static/prediction-state.js?v=3"></script>'
