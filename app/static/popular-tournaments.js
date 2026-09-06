@@ -52,7 +52,7 @@ async function fetchCatalog(){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),8000);
  try{
   const d=await window.GTS.api('/api/leagues/catalog',{signal:controller.signal}),items=d?.response||[];
-  if(!Array.isArray(items)||!items.length)throw new Error('SStats не вернул список турниров');
+  if(!Array.isArray(items)||!items.length)throw new Error('Не удалось получить список турниров');
   saveCatalog(items);return items
  }finally{clearTimeout(timer)}
 }
@@ -64,13 +64,10 @@ async function openCreateLeagueTopOnly(){
  try{
   const allowed=pickAllowed(await fetchCatalog());
   let opts='<option value="">Выбери чемпионат</option>'+allowed.map(option).join('');
-  const missing=SPECS.length-allowed.length;
-  const note=missing>0
-   ?`Доступны только выбранные турниры. Сейчас SStats нашёл ${allowed.length} из ${SPECS.length}.`
-   :'Доступны Лига чемпионов и 10 выбранных топ-чемпионатов. После выбора укажи сезон.';
+  const note='Доступны Лига чемпионов и 10 выбранных топ-чемпионатов. После выбора укажи сезон.';
   window.openSheet?.(`<div class="sheet-title">Создать лигу</div><input id="newLeagueName" class="field" placeholder="Название новой лиги"><select id="newLeagueTournament" class="field" onchange="onCreateTournamentChange()">${opts}</select><select id="newLeagueSeason" class="field" disabled><option value="">Сначала выбери чемпионат</option></select><div class="sheet-note">${esc(note)}</div><button class="save" id="createLeagueBtn" onclick="createLeague()" ${allowed.length?'':'disabled'}>Создать лигу</button><button class="close" onclick="closeSheet()">Закрыть</button>`);
  }catch(e){
-  const message=e?.name==='AbortError'?'SStats слишком долго отвечает. Попробуй ещё раз.':(e?.message||'Не удалось загрузить каталог SStats');
+  const message=e?.name==='AbortError'?'Сервер слишком долго отвечает. Попробуй ещё раз.':(e?.message||'Не удалось загрузить турниры');
   renderError(message)
  }
 }
@@ -104,11 +101,11 @@ function installCreateProgress(){
  const wrapped=async function(...args){
   const btn=document.getElementById('createLeagueBtn');
   const started=Date.now();let lastButton='';
-  setLine('Подготавливаем турнир: матчи, команды и игроки · 0 с');
+  setLine('Синхронизируем матчи и команды · 0 с');
   const render=()=>{
    const text=String(btn?.textContent||'');const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
-   if(/Созда[её]м лигу/i.test(text))setLine(`Данные готовы · создаём лигу · ${sec} с`);
-   else setLine(`Подготавливаем турнир: матчи, команды и игроки · ${sec} с`);
+   if(/Созда[её]м лигу/i.test(text))setLine(`Создаём лигу · ${sec} с`);
+   else setLine(`Синхронизируем матчи и команды · ${sec} с`);
    lastButton=text;
   };
   render();
@@ -117,14 +114,14 @@ function installCreateProgress(){
   try{
    const result=await original.apply(this,args);
    if(!document.getElementById('modal')?.classList.contains('open'))setLine('Лига создана','done');
-   else if(String(btn?.textContent||'').trim()==='Создать лигу')setLine('Операция остановлена · проверь сообщение выше','error');
+   else if(String(btn?.textContent||'').trim()==='Создать лигу')setLine('Операция остановлена','error');
    return result;
-  }catch(e){setLine('Ошибка загрузки · попробуй ещё раз','error');throw e}
+  }catch(e){setLine('Ошибка загрузки','error');throw e}
   finally{clearInterval(timer);observer?.disconnect()}
  };
  wrapped.__gtsProgress=true;wrapped.__original=original;window.createLeague=wrapped;return true;
 }
 
 setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly;if(!installCreateProgress()){const t=setInterval(()=>{if(installCreateProgress())clearInterval(t)},50);setTimeout(()=>clearInterval(t),5000)}},0);
-if(!document.querySelector('script[data-gts-create-league-error]')){const s=document.createElement('script');s.src='/static/create-league-error.js?v=2';s.dataset.gtsCreateLeagueError='1';document.body.appendChild(s)}
+if(!document.querySelector('script[data-gts-create-league-error]')){const s=document.createElement('script');s.src='/static/create-league-error.js?v=4';s.dataset.gtsCreateLeagueError='1';document.body.appendChild(s)}
 })();
