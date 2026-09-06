@@ -23,4 +23,5 @@ if(!document.querySelector('script[data-gts-tournament-component-theme]')){const
 if(!document.querySelector('script[data-gts-ui-polish-v2]')){const s=document.createElement('script');s.src='/static/ui-polish-v2.js?v=1';s.dataset.gtsUiPolishV2='1';document.body.appendChild(s)}
 setTimeout(()=>{if(!document.querySelector('script[data-gts-match-detail-lazy]')){const s=document.createElement('script');s.src='/static/match-detail.js?v=7';s.dataset.gtsMatchDetailLazy='1';document.body.appendChild(s)}},0);
 setTimeout(()=>{if(!document.querySelector('script[data-gts-match-stat-colors]')){const s=document.createElement('script');s.src='/static/match-stat-colors.js?v=1';s.dataset.gtsMatchStatColors='1';document.body.appendChild(s)}},0);
+setTimeout(()=>{if(!document.querySelector('script[data-gts-live-probe]')){const s=document.createElement('script');s.src='/static/match-live-cache.js?v=2';s.dataset.gtsLiveProbe='1';document.body.appendChild(s)}},0);
 })();
