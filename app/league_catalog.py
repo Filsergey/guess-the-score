@@ -1,21 +1,18 @@
-import asyncio
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.database import SessionLocal, get_db
+from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
-from app.services.sstats_sync import sync_sstats_competition
+from app.services.sstats_sync import prepare_sstats_competition
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
 
-# Fixed creation catalog. We intentionally do not call SStats /Leagues here:
-# that endpoint can be unavailable while Games/list continues to work.
 TOP_TOURNAMENTS = (
     {"league_id": 2, "name": "UEFA Champions League", "country": "Europe"},
     {"league_id": 39, "name": "Premier League", "country": "England"},
@@ -48,7 +45,6 @@ class LeagueThemeBody(BaseModel):
 def _catalog_seasons() -> list[dict]:
     now = datetime.now(timezone.utc)
     current = now.year if now.month >= 7 else now.year - 1
-    # Enough history for the UI, while keeping the selector compact.
     return [{"year": year, "uid": None} for year in range(current, 2019, -1)]
 
 
@@ -75,24 +71,6 @@ def _theme_response(league: UserLeague) -> dict:
         "background": league.theme_background,
         "tournament_background": league.theme_tournament_background,
     }
-
-
-async def _sync_competition_in_background(league_id: int, year: int, league_name: str) -> None:
-    """Populate matches after league creation without making the user wait for SStats.
-
-    SStats occasionally returns transient HTTP errors. Creation must still succeed, so
-    we retry the idempotent sync in a fresh DB session a few times after the response.
-    """
-    for delay in (0, 4, 15):
-        if delay:
-            await asyncio.sleep(delay)
-        try:
-            async with SessionLocal() as session:
-                await sync_sstats_competition(session, league_id, year, league_name)
-            return
-        except Exception:
-            # The next retry gets a new SQLAlchemy session and a clean transaction.
-            continue
 
 
 @router.get("/tournament-logo/{provider_id}")
@@ -132,7 +110,6 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
 
 @router.get("/catalog/logo-check")
 async def tournament_logo_check():
-    """Read-only diagnostic for the fixed tournament catalog."""
     return {
         "source": "fixed-top-tournaments",
         "count": len(TOP_TOURNAMENTS),
@@ -151,7 +128,6 @@ async def tournament_logo_check():
 @router.post("/catalog/sync")
 async def sync_catalog_tournament(
     body: CatalogSyncBody,
-    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -160,48 +136,44 @@ async def sync_catalog_tournament(
     if configured is None:
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
 
-    # Tournament identity is local application data. It must not depend on SStats
-    # being online at the exact moment a user presses "Создать лигу".
-    tournament = await db.scalar(
-        select(Tournament).where(
-            Tournament.provider == "sstats",
-            Tournament.provider_id == body.league_id,
+    # Deliberately blocking: the user league is created only after matches, teams,
+    # team logos and players for the selected season are fully prepared.
+    try:
+        result = await prepare_sstats_competition(
+            db,
+            body.league_id,
+            body.year,
+            configured["name"],
         )
-    )
-    if tournament is None:
-        tournament = Tournament(
-            provider="sstats",
-            provider_id=body.league_id,
-            name=configured["name"],
-            country=configured["country"],
-        )
-        db.add(tournament)
-        await db.flush()
-    else:
-        tournament.name = configured["name"]
-        tournament.country = configured["country"]
-    await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        message = str(exc).strip() or type(exc).__name__
+        if len(message) > 500:
+            message = message[:497] + "..."
+        raise HTTPException(
+            502,
+            f"Турнир пока не готов: {message}. Лига не создана.",
+        ) from exc
 
-    # Match import is intentionally deferred. The endpoint now returns immediately,
-    # so a temporary SStats 4xx/5xx/timeout can never prevent league creation.
-    background_tasks.add_task(
-        _sync_competition_in_background,
-        body.league_id,
-        body.year,
-        configured["name"],
-    )
+    tournament_id = result.get("tournament_id")
+    if not tournament_id or result.get("status") != "ready":
+        raise HTTPException(502, "Турнир подготовлен не полностью. Лига не создана.")
+
+    tournament = await db.get(Tournament, int(tournament_id))
+    if tournament is None:
+        raise HTTPException(502, "Турнир исчез после синхронизации. Лига не создана.")
+    tournament.name = configured["name"]
+    tournament.country = configured["country"]
+    tournament.logo_url = f"/api/leagues/tournament-logo/{body.league_id}"
+    await db.commit()
 
     return {
         "tournament_id": int(tournament.id),
         "provider_id": body.league_id,
         "season": body.year,
         "name": tournament.name,
-        "sync": {
-            "status": "queued",
-            "provider": "sstats",
-            "league_id": body.league_id,
-            "year": body.year,
-        },
+        "ready": True,
+        "sync": result,
     }
 
 
