@@ -23,5 +23,5 @@ async function openCreateLeaguePopular(){
   window.openSheet?.(`<div class="sheet-title">Создать лигу</div><input id="newLeagueName" class="field" placeholder="Название новой лиги"><select id="newLeagueTournament" class="field" onchange="onCreateTournamentChange()">${opts}</select><select id="newLeagueSeason" class="field" disabled><option value="">Сначала выбери турнир</option></select><div class="sheet-note">Сначала показаны 5 самых известных турниров. После выбора турнира выбери сезон.</div><button class="save" id="createLeagueBtn" onclick="createLeague()">Создать лигу</button><button class="close" onclick="closeSheet()">Закрыть</button>`);
  }catch(e){window.toast?.(e.message||'Не удалось загрузить каталог SStats')}
 }
-window.openCreateLeague=openCreateLeaguePopular;
+setTimeout(()=>{window.openCreateLeague=openCreateLeaguePopular},0);
 })();
