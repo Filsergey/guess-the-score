@@ -10,15 +10,15 @@ from sqlalchemy.orm import aliased
 from app.auth import get_current_user
 from app.database import get_db
 from app.localization import round_name_ru, team_name_ru
-from app.match_status import FINAL_MATCH_STATUSES
-from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, User, UserLeague
+from app.match_status import FINAL_MATCH_STATUSES, status_group, status_label_ru
+from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, Tournament, User, UserLeague
 from app.predictions import match_is_final, prediction_points
 router=APIRouter(prefix='/api/leagues',tags=['leagues'])
 class LeagueCreate(BaseModel):
- name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);is_private:bool=True;include_oracle:bool=True
+ name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);tournament_id:int|None=None;is_private:bool=True;include_oracle:bool=True
 class LeagueJoin(BaseModel):invite_code:str=Field(min_length=4,max_length=12)
 def _invite_code(length=8):return ''.join(secrets.choice(string.ascii_uppercase+string.digits) for _ in range(length))
-def serialize_league(l,r,c):return {'id':l.id,'name':l.name,'invite_code':l.invite_code,'owner_user_id':l.owner_user_id,'member_role':r,'member_count':c,'tournament_provider':l.tournament_provider,'tournament_season':l.tournament_season,'is_private':l.is_private,'include_oracle':l.include_oracle,'created_at':l.created_at}
+def serialize_league(l,r,c):return {'id':l.id,'name':l.name,'invite_code':l.invite_code,'owner_user_id':l.owner_user_id,'member_role':r,'member_count':c,'tournament_provider':l.tournament_provider,'tournament_season':l.tournament_season,'tournament_id':l.tournament_id,'is_private':l.is_private,'include_oracle':l.include_oracle,'created_at':l.created_at}
 async def _unique_invite_code(db):
  for _ in range(10):
   code=_invite_code()
@@ -37,10 +37,18 @@ def _oracle_score(op,m):
  try:data=json.loads(op.payload_json);ph=int(data['home_score']);pa=int(data['away_score'])
  except (ValueError,TypeError,KeyError,json.JSONDecodeError):return None
  return ph,pa,_score_points(ph,pa,m.home_goals,m.away_goals)
+def _league_match_query(league):
+ q=select(Match).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season)
+ if league.tournament_id is not None:q=q.where(Match.tournament_id==league.tournament_id)
+ return q
 async def _eligible_final_matches(db,league,user=None):
- q=select(Match).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
+ q=_league_match_query(league).where(Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
  if user is not None:q=q.where(Match.kickoff_at>=user.registered_at)
  return (await db.execute(q)).scalars().all()
+@router.get('/tournaments')
+async def league_tournaments(db:AsyncSession=Depends(get_db)):
+ rows=(await db.execute(select(Tournament,Match.season,func.count(Match.id)).join(Match,Match.tournament_id==Tournament.id).where(Tournament.provider=='sstats',Match.provider=='sstats').group_by(Tournament.id,Match.season).order_by(Match.season.desc(),Tournament.name))).all()
+ return {'count':len(rows),'response':[{'id':t.id,'provider':'sstats','provider_id':t.provider_id,'name':t.name,'country':t.country,'logo_url':t.logo_url,'season':int(season),'match_count':int(count or 0)} for t,season,count in rows]}
 @router.get('/mine')
 async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  sq=select(LeagueMember.league_id,func.count(LeagueMember.id).label('member_count')).group_by(LeagueMember.league_id).subquery();rows=(await db.execute(select(UserLeague,LeagueMember.role,sq.c.member_count).join(LeagueMember,LeagueMember.league_id==UserLeague.id).outerjoin(sq,sq.c.league_id==UserLeague.id).where(LeagueMember.user_id==user.id).order_by(UserLeague.created_at))).all();items=[serialize_league(l,r,int(c or 0)) for l,r,c in rows];return {'count':len(items),'response':items}
@@ -48,7 +56,13 @@ async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends
 async def create_league(body:LeagueCreate,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  name=body.name.strip()
  if len(name)<2:raise HTTPException(422,'League name is too short')
- now=datetime.now(timezone.utc);l=UserLeague(name=name,invite_code=await _unique_invite_code(db),owner_user_id=user.id,tournament_provider=body.tournament_provider,tournament_season=body.tournament_season,is_private=body.is_private,include_oracle=body.include_oracle,created_at=now);db.add(l);await db.flush();db.add(LeagueMember(league_id=l.id,user_id=user.id,role='owner',joined_at=now));await db.commit();await db.refresh(l);return serialize_league(l,'owner',1)
+ tournament=None
+ if body.tournament_id is not None:
+  tournament=await db.get(Tournament,body.tournament_id)
+  if tournament is None or tournament.provider!='sstats':raise HTTPException(422,'Tournament is not available in SStats')
+  exists=await db.scalar(select(func.count(Match.id)).where(Match.tournament_id=tournament.id,Match.provider=='sstats',Match.season==body.tournament_season))
+  if not exists:raise HTTPException(422,'No SStats matches found for this tournament and season')
+ now=datetime.now(timezone.utc);l=UserLeague(name=name,invite_code=await _unique_invite_code(db),owner_user_id=user.id,tournament_provider='sstats' if tournament else body.tournament_provider,tournament_season=body.tournament_season,tournament_id=tournament.id if tournament else None,is_private=body.is_private,include_oracle=body.include_oracle,created_at=now);db.add(l);await db.flush();db.add(LeagueMember(league_id=l.id,user_id=user.id,role='owner',joined_at=now));await db.commit();await db.refresh(l);return serialize_league(l,'owner',1)
 @router.post('/join')
 async def join_league(body:LeagueJoin,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  l=await db.scalar(select(UserLeague).where(UserLeague.invite_code==body.invite_code.strip().upper()))
@@ -61,6 +75,17 @@ async def league_members(league_id:int,user:User=Depends(get_current_user),db:As
  membership=await _membership(league_id,user,db);l=await db.get(UserLeague,league_id)
  if l is None:raise HTTPException(404,'League not found')
  rows=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id).order_by(LeagueMember.joined_at))).all();items=[{'user_id':m.user_id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'role':m.role,'joined_at':m.joined_at} for m,u in rows];return {'league':serialize_league(l,membership.role if membership else 'superadmin',len(items)),'count':len(items),'response':items}
+@router.get('/{league_id}/matches')
+async def league_matches(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ await _membership(league_id,user,db);league=await db.get(UserLeague,league_id)
+ if league is None:raise HTTPException(404,'League not found')
+ h,a=aliased(Team),aliased(Team);q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season)
+ if league.tournament_id is not None:q=q.where(Match.tournament_id==league.tournament_id)
+ rows=(await db.execute(q.order_by(Match.kickoff_at))).all()
+ items=[]
+ for m,home,away in rows:
+  items.append({'id':m.id,'provider':m.provider,'provider_id':m.provider_id,'season':m.season,'tournament_id':m.tournament_id,'round':round_name_ru(m.round_name),'kickoff_at':m.kickoff_at,'status':m.status_short,'status_source':m.status_long,'status_group':status_group(m.status_short),'status_label':status_label_ru(m.status_short),'elapsed':m.elapsed,'home':{'id':home.id,'provider':home.provider,'provider_id':home.provider_id,'name':team_name_ru(home.name),'name_original':home.name,'code':home.code,'logo':f'/api/team-logo/db/{home.id}','goals':m.home_goals},'away':{'id':away.id,'provider':away.provider,'provider_id':away.provider_id,'name':team_name_ru(away.name),'name_original':away.name,'code':away.code,'logo':f'/api/team-logo/db/{away.id}','goals':m.away_goals}})
+ return {'league':serialize_league(league,'member',0),'count':len(items),'response':items}
 @router.get('/{league_id}/leaderboard')
 async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  membership=await _membership(league_id,user,db);league=await db.get(UserLeague,league_id)
@@ -97,6 +122,7 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
   if member is None:raise HTTPException(404,'Participant is not a member of this league')
   _,target=member
  h,a=aliased(Team),aliased(Team);q=select(Match,h,a).join(h,Match.home_team_id==h.id).join(a,Match.away_team_id==a.id).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None))
+ if league.tournament_id is not None:q=q.where(Match.tournament_id==league.tournament_id)
  if target is not None:q=q.where(Match.kickoff_at>=target.registered_at)
  matches=(await db.execute(q.order_by(Match.kickoff_at.desc()))).all();match_ids=[m.id for m,_,_ in matches]
  if is_oracle:preds=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(match_ids)))).scalars().all() if match_ids else []
