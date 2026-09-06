@@ -56,28 +56,18 @@ def _season_rows(row: dict) -> list[dict]:
         if year in seen:
             continue
         seen.add(year)
-        result.append({
-            "year": year,
-            "uid": _pick(season, "uid", "Uid", "UID", "seasonUid", "SeasonUid", "id", "Id"),
-        })
+        result.append({"year": year, "uid": _pick(season, "uid", "Uid", "UID", "seasonUid", "SeasonUid", "id", "Id")})
     result.sort(key=lambda x: x["year"], reverse=True)
     return result
 
 
 def _catalog_priority(item: dict) -> tuple:
-    """Put the five most recognisable club competitions first, then keep the rest alphabetical."""
     name = str(item.get("name") or "").lower().replace("-", " ")
     country = str(item.get("country") or "").lower()
-    popular = (
-        (0, ("champions league",)),
-        (1, ("premier league",)),
-        (2, ("la liga", "laliga", "primera division")),
-        (3, ("serie a",)),
-        (4, ("bundesliga",)),
-    )
+    popular = ((0,("champions league",)),(1,("premier league",)),(2,("la liga","laliga","primera division")),(3,("serie a",)),(4,("bundesliga",)))
     for rank, aliases in popular:
         if any(alias in name for alias in aliases):
-            if any(word in name for word in ("women", "woman", "femin", "u19", "u21", "u23", "youth", "reserve")):
+            if any(word in name for word in ("women","woman","femin","u19","u21","u23","youth","reserve")):
                 break
             return (0, rank, country, name)
     return (1, 99, country, name)
@@ -85,154 +75,88 @@ def _catalog_priority(item: dict) -> tuple:
 
 def _popular_name(name: str) -> str | None:
     n = str(name or "").lower().replace("-", " ")
-    if any(word in n for word in ("women", "woman", "femin", "u19", "u20", "u21", "u23", "youth", "reserve")):
+    if any(word in n for word in ("women","woman","femin","u19","u20","u21","u23","youth","reserve")):
         return None
-    if "champions league" in n:
-        return "Лига чемпионов"
-    if "premier league" in n:
-        return "Premier League"
-    if any(x in n for x in ("la liga", "laliga", "primera division")):
-        return "La Liga"
-    if "serie a" in n:
-        return "Serie A"
-    if "bundesliga" in n:
-        return "Bundesliga"
+    if "champions league" in n:return "Лига чемпионов"
+    if "premier league" in n:return "Premier League"
+    if any(x in n for x in ("la liga","laliga","primera division")):return "La Liga"
+    if "serie a" in n:return "Serie A"
+    if "bundesliga" in n:return "Bundesliga"
     return None
 
 
-async def _theme_league(league_id: int, user: User, db: AsyncSession) -> UserLeague:
-    league = await db.get(UserLeague, league_id)
-    if league is None:
-        raise HTTPException(404, "League not found")
-    if user.role != "superadmin":
-        member = await db.scalar(select(LeagueMember.id).where(LeagueMember.league_id == league_id, LeagueMember.user_id == user.id))
-        if member is None:
-            raise HTTPException(403, "You are not a member of this league")
+async def _theme_league(league_id:int,user:User,db:AsyncSession)->UserLeague:
+    league=await db.get(UserLeague,league_id)
+    if league is None:raise HTTPException(404,"League not found")
+    if user.role!="superadmin":
+        member=await db.scalar(select(LeagueMember.id).where(LeagueMember.league_id==league_id,LeagueMember.user_id==user.id))
+        if member is None:raise HTTPException(403,"You are not a member of this league")
     return league
 
 
-def _theme_response(league: UserLeague) -> dict:
-    return {
-        "league_id": league.id,
-        "icon": league.theme_icon,
-        "background": league.theme_background,
-        "tournament_background": league.theme_tournament_background,
-    }
+def _theme_response(league:UserLeague)->dict:
+    return {"league_id":league.id,"icon":league.theme_icon,"background":league.theme_background,"tournament_background":league.theme_tournament_background}
 
 
 @router.get("/catalog")
-async def tournament_catalog(user: User = Depends(get_current_user)):
+async def tournament_catalog(user:User=Depends(get_current_user)):
     del user
-    try:
-        payload = await SStatsProvider().get_leagues()
-    except Exception as exc:
-        raise HTTPException(502, f"SStats catalog unavailable: {type(exc).__name__}") from exc
-    rows = payload.get("data") or payload.get("response") or []
-    if isinstance(rows, dict):
-        rows = [rows]
-    result = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
-            continue
-        raw_id = _pick(row, "id", "Id", "leagueId", "LeagueId")
-        try:
-            league_id = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        name = str(_pick(row, "name", "Name", "leagueName", "LeagueName", default=f"SStats #{league_id}"))
-        seasons = _season_rows(row)
-        result.append({
-            "league_id": league_id,
-            "name": name,
-            "country": _country_name(_pick(row, "country", "Country", "countryName", "CountryName")),
-            "logo_url": _pick(row, "logoUrl", "LogoUrl", "logo", "Logo"),
-            "seasons": seasons,
-        })
+    try:payload=await SStatsProvider().get_leagues()
+    except Exception as exc:raise HTTPException(502,f"SStats catalog unavailable: {type(exc).__name__}") from exc
+    rows=payload.get("data") or payload.get("response") or []
+    if isinstance(rows,dict):rows=[rows]
+    result=[]
+    for row in rows if isinstance(rows,list) else []:
+        if not isinstance(row,dict):continue
+        raw_id=_pick(row,"id","Id","leagueId","LeagueId")
+        try:league_id=int(raw_id)
+        except (TypeError,ValueError):continue
+        name=str(_pick(row,"name","Name","leagueName","LeagueName",default=f"SStats #{league_id}"));seasons=_season_rows(row)
+        result.append({"league_id":league_id,"name":name,"country":_country_name(_pick(row,"country","Country","countryName","CountryName")),"logo_url":_pick(row,"logoUrl","LogoUrl","logo","Logo"),"seasons":seasons})
     result.sort(key=_catalog_priority)
-    return {"count": len(result), "response": result}
+    return {"count":len(result),"response":result}
 
 
+# TEMPORARY public read-only diagnostic endpoint. Remove after SStats logo check.
 @router.get("/catalog/logo-check")
-async def tournament_logo_check(user: User = Depends(get_current_user)):
-    if user.role != "superadmin":
-        raise HTTPException(403, "Logo diagnostics are available only to superadmin")
-    try:
-        payload = await SStatsProvider().get_leagues()
-    except Exception as exc:
-        raise HTTPException(502, f"SStats catalog unavailable: {type(exc).__name__}") from exc
-    rows = payload.get("data") or payload.get("response") or []
-    if isinstance(rows, dict):
-        rows = [rows]
-    found = []
-    for row in rows if isinstance(rows, list) else []:
-        if not isinstance(row, dict):
-            continue
-        name = str(_pick(row, "name", "Name", "leagueName", "LeagueName", default=""))
-        popular = _popular_name(name)
-        if not popular:
-            continue
-        found.append({
-            "popular_name": popular,
-            "league_id": _pick(row, "id", "Id", "leagueId", "LeagueId"),
-            "name": name,
-            "country": _country_name(_pick(row, "country", "Country", "countryName", "CountryName")),
-            "logo_candidates": {
-                key: row.get(key)
-                for key in ("logoUrl", "LogoUrl", "logo", "Logo", "image", "Image", "icon", "Icon", "badge", "Badge")
-                if key in row
-            },
-            "all_keys": sorted(row.keys()),
-        })
-    order = {"Лига чемпионов": 0, "Premier League": 1, "La Liga": 2, "Serie A": 3, "Bundesliga": 4}
-    found.sort(key=lambda x: (order.get(x["popular_name"], 99), str(x.get("country") or ""), x["name"]))
-    return {
-        "sstats_top_level_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
-        "matches": found,
-        "has_any_logo_field": any(bool(x["logo_candidates"]) for x in found),
-    }
+async def tournament_logo_check():
+    try:payload=await SStatsProvider().get_leagues()
+    except Exception as exc:raise HTTPException(502,f"SStats catalog unavailable: {type(exc).__name__}") from exc
+    rows=payload.get("data") or payload.get("response") or []
+    if isinstance(rows,dict):rows=[rows]
+    found=[]
+    for row in rows if isinstance(rows,list) else []:
+        if not isinstance(row,dict):continue
+        name=str(_pick(row,"name","Name","leagueName","LeagueName",default=""));popular=_popular_name(name)
+        if not popular:continue
+        found.append({"popular_name":popular,"league_id":_pick(row,"id","Id","leagueId","LeagueId"),"name":name,"country":_country_name(_pick(row,"country","Country","countryName","CountryName")),"logo_candidates":{key:row.get(key) for key in ("logoUrl","LogoUrl","logo","Logo","image","Image","icon","Icon","badge","Badge") if key in row},"all_keys":sorted(row.keys())})
+    order={"Лига чемпионов":0,"Premier League":1,"La Liga":2,"Serie A":3,"Bundesliga":4};found.sort(key=lambda x:(order.get(x["popular_name"],99),str(x.get("country") or ""),x["name"]))
+    return {"sstats_top_level_keys":sorted(payload.keys()) if isinstance(payload,dict) else [],"matches":found,"has_any_logo_field":any(bool(x["logo_candidates"]) for x in found)}
 
 
 @router.post("/catalog/sync")
-async def sync_catalog_tournament(
-    body: CatalogSyncBody,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
+async def sync_catalog_tournament(body:CatalogSyncBody,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
     del user
-    try:
-        result = await sync_sstats_competition(db, body.league_id, body.year, body.league_name)
+    try:result=await sync_sstats_competition(db,body.league_id,body.year,body.league_name)
     except Exception as exc:
-        await db.rollback()
-        raise HTTPException(502, f"SStats tournament sync failed: {type(exc).__name__}") from exc
-    tournament_id = result.get("tournament_id")
-    if not tournament_id:
-        raise HTTPException(422, "SStats did not return matches for this tournament and season")
-    tournament = await db.get(Tournament, int(tournament_id))
-    return {
-        "tournament_id": int(tournament_id),
-        "provider_id": body.league_id,
-        "season": body.year,
-        "name": tournament.name if tournament else (body.league_name or f"SStats #{body.league_id}"),
-        "sync": result,
-    }
+        await db.rollback();raise HTTPException(502,f"SStats tournament sync failed: {type(exc).__name__}") from exc
+    tournament_id=result.get("tournament_id")
+    if not tournament_id:raise HTTPException(422,"SStats did not return matches for this tournament and season")
+    tournament=await db.get(Tournament,int(tournament_id))
+    return {"tournament_id":int(tournament_id),"provider_id":body.league_id,"season":body.year,"name":tournament.name if tournament else (body.league_name or f"SStats #{body.league_id}"),"sync":result}
 
 
 @router.get("/{league_id}/theme")
-async def get_league_theme(league_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    league = await _theme_league(league_id, user, db)
-    return _theme_response(league)
+async def get_league_theme(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    return _theme_response(await _theme_league(league_id,user,db))
 
 
 @router.put("/{league_id}/theme")
-async def set_league_theme(league_id: int, body: LeagueThemeBody, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    league = await _theme_league(league_id, user, db)
-    if league.owner_user_id != user.id and user.role != "superadmin":
-        raise HTTPException(403, "Only the league owner can change its interface")
-    league.theme_icon = body.icon or None
-    league.theme_background = body.background or None
-    league.theme_tournament_background = body.tournament_background or None
-    await db.commit()
-    return _theme_response(league)
+async def set_league_theme(league_id:int,body:LeagueThemeBody,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+    league=await _theme_league(league_id,user,db)
+    if league.owner_user_id!=user.id and user.role!="superadmin":raise HTTPException(403,"Only the league owner can change its interface")
+    league.theme_icon=body.icon or None;league.theme_background=body.background or None;league.theme_tournament_background=body.tournament_background or None
+    await db.commit();return _theme_response(league)
 
 
 from app.test_fixture import router as test_fixture_router
