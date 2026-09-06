@@ -12,7 +12,7 @@
       <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity=".35"/>
     </filter>
   </defs>
-  <rect width="1024" height="1024" rx="224" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
   <circle cx="512" cy="512" r="385" fill="none" stroke="#20a7ff" stroke-opacity=".11" stroke-width="28"/>
   <text x="512" y="330" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="250" font-weight="900" fill="#f5f9ff">?</text>
   <g filter="url(#shadow)">
