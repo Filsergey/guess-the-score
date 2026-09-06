@@ -77,7 +77,6 @@ def _catalog_priority(item: dict) -> tuple:
     )
     for rank, aliases in popular:
         if any(alias in name for alias in aliases):
-            # Avoid accidentally prioritising similarly named youth/women/reserve competitions.
             if any(word in name for word in ("women", "woman", "femin", "u19", "u21", "u23", "youth", "reserve")):
                 break
             return (0, rank, country, name)
@@ -177,3 +176,7 @@ async def set_league_theme(league_id: int, body: LeagueThemeBody, user: User = D
     league.theme_tournament_background = body.tournament_background or None
     await db.commit()
     return _theme_response(league)
+
+
+from app.test_fixture import router as test_fixture_router
+router.include_router(test_fixture_router)
