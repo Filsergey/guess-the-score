@@ -63,7 +63,6 @@ class SStatsProvider:
 
     @staticmethod
     def _details_payload(payload: dict) -> dict:
-        """Keep one response shape for match-detail consumers."""
         if not isinstance(payload, dict):
             return {"data": []}
         if "data" in payload or "response" in payload:
@@ -96,7 +95,6 @@ class SStatsProvider:
 
     @classmethod
     def _normalize_game(cls, row: dict) -> dict:
-        """Adapt the documented ApiSaGame shape to the flat fields used by our DB sync."""
         if not isinstance(row, dict): return row
         out = dict(row)
         home = cls._value(row, "homeTeam", "HomeTeam") or {}
@@ -178,9 +176,7 @@ class SStatsProvider:
         payload,_=await self.competition_games(league_id,year);return payload
 
     async def query_game_details(self,game_id:int)->dict:
-        # Keep this list to fields documented by SStats. One unsupported field makes
-        # Games/query fail as a whole, which previously hid every live statistic.
-        fields=["Id","FlashId","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","Winner1","WinnerX","Winner2","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
+        fields=["Id","FlashId","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
         payload=await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0},timeout=2.5)
         return self._details_payload(payload)
 
@@ -188,20 +184,27 @@ class SStatsProvider:
         return self._details_payload(await self._get("Ls/GameInfo",{"id":str(flash_id)},timeout=2.5))
 
     async def get_game(self,game_id:int)->dict:
-        primary=self._details_payload(await self._get(f"Games/{game_id}",timeout=2.5))
-        obj=self._payload_object(primary)
+        return self._details_payload(await self._get(f"Games/{game_id}",timeout=2.0))
+
+    async def get_game_full(self,game_id:int)->dict:
+        primary={"data":[]};obj={}
+        try:
+            primary=await self.get_game(game_id);obj=self._payload_object(primary)
+        except Exception:
+            primary={"data":[]};obj={}
         flash_id=self._deep_value(obj,"flashId","FlashId","flashscoreId","FlashscoreId")
         if not flash_id:
             try:
-                lookup=await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":["Id","FlashId"],"Limit":1,"Format":"json","Timezone":0},timeout=1.8)
+                lookup=await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":["Id","FlashId"],"Limit":1,"Format":"json","Timezone":0},timeout=1.4)
                 flash_id=self._deep_value(lookup,"flashId","FlashId")
             except Exception:
                 flash_id=None
         if flash_id:
             try:
                 ls=await self.get_ls_game_info(str(flash_id));ls_obj=self._payload_object(ls)
-                if isinstance(obj,dict) and ls_obj:
-                    enriched=dict(obj);enriched["_lsGameInfo"]=ls_obj
+                if ls_obj:
+                    enriched=dict(obj) if isinstance(obj,dict) else {}
+                    enriched["_lsGameInfo"]=ls_obj
                     result=dict(primary);result["data"]=enriched
                     return result
             except Exception:
