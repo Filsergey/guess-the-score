@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -10,13 +11,15 @@ import jwt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from pywebpush import WebPushException, webpush
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
+from app.push_models import PushSubscription
 from app.security import create_access_token, decode_access_token, verify_telegram_init_data
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -27,6 +30,20 @@ _bot_username_cache: str | None = None
 
 class TelegramLoginRequest(BaseModel):
     init_data: str
+
+
+class PushKeys(BaseModel):
+    p256dh: str = Field(min_length=20, max_length=500)
+    auth: str = Field(min_length=8, max_length=300)
+
+
+class PushSubscriptionRequest(BaseModel):
+    endpoint: str = Field(min_length=20, max_length=3000)
+    keys: PushKeys
+
+
+class PushUnsubscribeRequest(BaseModel):
+    endpoint: str = Field(min_length=20, max_length=3000)
 
 
 def serialize_user(user: User) -> dict:
@@ -125,6 +142,15 @@ def _web_login_config() -> tuple[str, str]:
     return client_id, client_secret
 
 
+def _webpush_config() -> tuple[str, str, str]:
+    public_key = (settings.webpush_vapid_public_key or "").strip()
+    private_key = (settings.webpush_vapid_private_key or "").strip()
+    subject = (settings.webpush_subject or "").strip() or "mailto:admin@example.com"
+    if not public_key or not private_key:
+        raise HTTPException(status_code=503, detail="Push-уведомления ещё не настроены")
+    return public_key, private_key, subject
+
+
 def _callback_url(request: Request) -> str:
     url = str(request.url_for("telegram_web_callback"))
     forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
@@ -176,6 +202,26 @@ async def _verify_telegram_id_token(id_token: str, client_id: str) -> dict:
         )
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Не удалось подтвердить вход через Telegram") from exc
+
+
+def _push_payload(subscription: PushSubscription) -> dict:
+    return {
+        "endpoint": subscription.endpoint,
+        "keys": {"p256dh": subscription.p256dh, "auth": subscription.auth},
+    }
+
+
+async def _send_push(subscription: PushSubscription, payload: dict) -> None:
+    _, private_key, subject = _webpush_config()
+    await asyncio.to_thread(
+        webpush,
+        subscription_info=_push_payload(subscription),
+        data=json.dumps(payload, ensure_ascii=False),
+        vapid_private_key=private_key,
+        vapid_claims={"sub": subject},
+        ttl=3600,
+        timeout=8,
+    )
 
 
 @router.post("/telegram")
@@ -313,6 +359,98 @@ async def telegram_web_callback(
     response = HTMLResponse(html, headers={"Cache-Control": "no-store"})
     response.delete_cookie("gts_tg_oauth", path="/api/auth/web")
     return response
+
+
+@router.get("/push/config")
+async def push_config(user: User = Depends(get_current_user)) -> dict:
+    public_key = (settings.webpush_vapid_public_key or "").strip()
+    configured = bool(public_key and (settings.webpush_vapid_private_key or "").strip())
+    return {"configured": configured, "public_key": public_key if configured else None}
+
+
+@router.post("/push/subscribe")
+async def push_subscribe(
+    body: PushSubscriptionRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _webpush_config()
+    subscription = await db.scalar(select(PushSubscription).where(PushSubscription.endpoint == body.endpoint))
+    if subscription is None:
+        subscription = PushSubscription(
+            user_id=user.id,
+            endpoint=body.endpoint,
+            p256dh=body.keys.p256dh,
+            auth=body.keys.auth,
+            user_agent=request.headers.get("user-agent"),
+        )
+        db.add(subscription)
+    else:
+        subscription.user_id = user.id
+        subscription.p256dh = body.keys.p256dh
+        subscription.auth = body.keys.auth
+        subscription.user_agent = request.headers.get("user-agent")
+        subscription.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"ok": True, "subscribed": True}
+
+
+@router.post("/push/unsubscribe")
+async def push_unsubscribe(
+    body: PushUnsubscribeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    subscription = await db.scalar(
+        select(PushSubscription).where(
+            PushSubscription.endpoint == body.endpoint,
+            PushSubscription.user_id == user.id,
+        )
+    )
+    if subscription is not None:
+        await db.delete(subscription)
+        await db.commit()
+    return {"ok": True, "subscribed": False}
+
+
+@router.post("/push/test")
+async def push_test(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    _webpush_config()
+    subscriptions = (
+        await db.execute(select(PushSubscription).where(PushSubscription.user_id == user.id))
+    ).scalars().all()
+    if not subscriptions:
+        raise HTTPException(status_code=404, detail="Сначала включи уведомления на этом устройстве")
+    sent = 0
+    removed = 0
+    for subscription in subscriptions:
+        try:
+            await _send_push(
+                subscription,
+                {
+                    "title": "Угадай счёт",
+                    "body": "Уведомления работают ⚽",
+                    "url": "/",
+                    "tag": "gts-test",
+                },
+            )
+            sent += 1
+        except WebPushException as exc:
+            status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+            if status in {404, 410}:
+                await db.delete(subscription)
+                removed += 1
+        except Exception:
+            continue
+    if removed:
+        await db.commit()
+    if sent == 0:
+        raise HTTPException(status_code=502, detail="Не удалось отправить тестовое уведомление")
+    return {"ok": True, "sent": sent, "removed_stale": removed}
 
 
 @router.get("/me")
