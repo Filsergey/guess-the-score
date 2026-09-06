@@ -39,6 +39,9 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_top_scorer_player_id ON tournament_predictions (top_scorer_player_id)",
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_top_assistant_player_id ON tournament_predictions (top_assistant_player_id)",
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_best_player_id ON tournament_predictions (best_player_player_id)",
+        "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS tournament_id INTEGER NULL REFERENCES tournaments(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS ix_user_leagues_tournament_id ON user_leagues (tournament_id)",
+        "UPDATE user_leagues ul SET tournament_id = x.tournament_id FROM (SELECT MIN(tournament_id) AS tournament_id, provider, season FROM matches GROUP BY provider, season) x WHERE ul.tournament_id IS NULL AND ul.tournament_provider=x.provider AND ul.tournament_season=x.season",
     ]
     for statement in statements:
         await conn.execute(text(statement))
