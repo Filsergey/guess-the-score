@@ -14,7 +14,6 @@ function ensureMeta(name,content){
 }
 
 ensureLink('manifest','/static/manifest.webmanifest?v=1');
-ensureLink('apple-touch-icon','/static/pwa-icon.svg?v=1');
 ensureMeta('apple-mobile-web-app-capable','yes');
 ensureMeta('apple-mobile-web-app-status-bar-style','black-translucent');
 ensureMeta('apple-mobile-web-app-title','Угадай счёт');
