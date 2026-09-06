@@ -94,12 +94,12 @@ async def mini_app():
   '<script src="/static/tournament-save-guard.js?v=1"></script>'
   '<script src="/static/match-participants.js?v=4"></script>'
   '<script src="/static/match-pitch.js?v=2"></script>'
-  '<script src="/static/match-live-cache.js?v=1"></script>'
-  '<script src="/static/match-detail.js?v=6"></script>'
+  '<script src="/static/match-live-cache.js?v=3" data-gts-live-probe="1"></script>'
+  '<script src="/static/match-detail.js?v=8" data-gts-match-detail-lazy="1"></script>'
   '<script src="/static/match-detail-safety.js?v=2"></script>'
   '<script src="/static/modal-hard-close.js?v=4"></script>'
   '<script src="/static/match-detail-groups.js?v=1"></script>'
-  '<script src="/static/match-feed.js?v=8"></script>'
+  '<script src="/static/match-feed.js?v=9"></script>'
   '<script src="/static/prediction-state.js?v=3"></script>'
  )
  return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
@@ -180,8 +180,8 @@ async def match_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  if not r:raise HTTPException(404,'Match not found')
  return serialize_match(*r)
 
-async def _sstats_safe(label,coro):
- try:return await asyncio.wait_for(coro,timeout=2.5),None
+async def _sstats_safe(label,coro,timeout=2.5):
+ try:return await asyncio.wait_for(coro,timeout=timeout),None
  except Exception as exc:return {},f'{label}:{type(exc).__name__}'
 
 @app.get('/api/matches/{match_id}/details')
@@ -192,13 +192,13 @@ async def match_rich_detail(match_id:int,live_only:bool=Query(default=False),db:
  if m.provider!='sstats':return {**base,'details_available':False,'details_source':None,'details_errors':[],'details':None}
  p=SStatsProvider();errors=[]
  if live_only:
-  raw,err=await _sstats_safe('game',p.get_game(m.provider_id))
+  raw,err=await _sstats_safe('game',p.get_game(m.provider_id),2.6)
   if err:errors.append(err)
   full=_first_item(raw) if raw else {}
   rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'player_stats':[],'statistics':{},'lineups':{'home':{'formation':None,'coach':None,'starting':[],'bench':[]},'away':{'formation':None,'coach':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
   if not full:return {**base,'details_available':False,'details_source':'games/{id}:live','details_errors':errors,'details':None,'live_only':True}
   return {**base,'details_available':True,'details_source':'games/{id}:live','details_errors':errors,'details':rich,'live_only':True}
- qraw,graw,glraw=await asyncio.gather(_sstats_safe('query',p.query_game_details(m.provider_id)),_sstats_safe('game',p.get_game(m.provider_id)),_sstats_safe('glicko',p.get_glicko(m.provider_id)))
+ qraw,graw,glraw=await asyncio.gather(_sstats_safe('query',p.query_game_details(m.provider_id),3.0),_sstats_safe('game',p.get_game_full(m.provider_id),6.0),_sstats_safe('glicko',p.get_glicko(m.provider_id),2.5))
  (qp,qe),(gp,ge),(glp,gle)=qraw,graw,glraw
  errors.extend(x for x in (qe,ge,gle) if x)
  qd=_first_item(qp) if qp else {};full=_first_item(gp) if gp else {};gd=full.get('game') if isinstance(full.get('game'),dict) else full;gl=_first_item(glp) if glp else {}
@@ -208,5 +208,5 @@ async def match_rich_detail(match_id:int,live_only:bool=Query(default=False),db:
  if rich.get('venue_full') and not details.get('venue',{}).get('name'):details['venue']=rich['venue_full']
  if not details.get('coaches',{}).get('home'):details['coaches']['home']=rich.get('lineups',{}).get('home',{}).get('coach')
  if not details.get('coaches',{}).get('away'):details['coaches']['away']=rich.get('lineups',{}).get('away',{}).get('coach')
- source='games/query' if qd else 'games/{id}';source+='+full' if full else '';source+='+glicko' if gl else ''
+ source='games/query' if qd else 'games/{id}';source+='+flash' if isinstance(full.get('_lsGameInfo'),dict) else '';source+='+glicko' if gl else ''
  return {**base,'details_available':True,'details_source':source,'details_errors':errors,'details':details,'live_only':False}
