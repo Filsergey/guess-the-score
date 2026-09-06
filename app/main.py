@@ -82,7 +82,7 @@ async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8')
  html=html.replace('<script src="/static/core-v2.js?v=3"></script><script src="/static/app-shell.js?v=6"></script>','')
  scripts=(
-  '<script src="/static/core-v2.js?v=6"></script>'
+  '<script src="/static/core-v2.js?v=7"></script>'
   '<script src="/static/app-shell.js?v=22"></script>'
   '<script src="/static/achievement-notify.js?v=2" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'

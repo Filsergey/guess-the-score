@@ -39,7 +39,7 @@ const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(/Macintosh/i.test(na
 const api={standalone,registration:null,ready:null};
 window.GTSPWA=api;
 if('serviceWorker' in navigator){
-  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=2').then(reg=>{
+  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=3').then(reg=>{
     api.registration=reg;
     return reg;
   }).catch(()=>null);

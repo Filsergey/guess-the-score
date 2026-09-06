@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,8 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
-from app.providers.sstats import SStatsProvider
 from app.services.competition_readiness import prepare_sstats_competition_tolerant
+from app.tournament_logos import local_tournament_logo_path
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
 
@@ -28,7 +29,6 @@ TOP_TOURNAMENTS = (
     {"league_id": 235, "name": "Russian Premier League", "country": "Russia"},
 )
 ALLOWED_TOURNAMENTS = {item["league_id"]: item for item in TOP_TOURNAMENTS}
-TOURNAMENT_LOGO_IDS = set(ALLOWED_TOURNAMENTS)
 
 
 class CatalogSyncBody(BaseModel):
@@ -90,55 +90,16 @@ def _theme_response(league: UserLeague) -> dict:
     }
 
 
-def _logo_value(row: dict):
-    logo = row.get("logoUrl") or row.get("LogoUrl") or row.get("logo") or row.get("Logo")
-    if isinstance(logo, dict):
-        logo = logo.get("url") or logo.get("Url")
-    return str(logo) if logo and str(logo).startswith(("http://", "https://")) else None
-
-
-async def _sstats_tournament_logo_url(provider_id: int) -> str | None:
-    try:
-        payload = await SStatsProvider().get_leagues()
-    except Exception:
-        return None
-    rows = payload.get("data") or payload.get("response") or []
-    if isinstance(rows, dict):
-        rows = [rows]
-    if not isinstance(rows, list):
-        return None
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        raw_id = row.get("id") or row.get("Id") or row.get("leagueId") or row.get("LeagueId")
-        try:
-            if raw_id is None or int(raw_id) != int(provider_id):
-                continue
-        except (TypeError, ValueError):
-            continue
-        return _logo_value(row)
-    return None
-
-
 @router.get("/tournament-logo/{provider_id}")
 async def tournament_logo(provider_id: int):
-    """Proxy the tournament badge discovered through SStats only."""
-    if provider_id not in TOURNAMENT_LOGO_IDS:
+    """Serve the bundled tournament badge without an upstream request."""
+    path = local_tournament_logo_path(provider_id)
+    if path is None:
         raise HTTPException(404, "Tournament logo not configured")
-    url = await _sstats_tournament_logo_url(provider_id)
-    if not url:
-        raise HTTPException(404, "Tournament logo not loaded yet")
-    try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            upstream = await client.get(url, headers={"User-Agent": "guess-the-score/1.0"})
-            upstream.raise_for_status()
-    except Exception as exc:
-        raise HTTPException(502, f"Tournament logo unavailable: {type(exc).__name__}") from exc
-    content_type = upstream.headers.get("content-type") or "image/png"
-    return Response(
-        content=upstream.content,
-        media_type=content_type.split(";", 1)[0],
-        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
     )
 
 
@@ -160,7 +121,7 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
 @router.get("/catalog/logo-check")
 async def tournament_logo_check():
     return {
-        "source": "sstats",
+        "source": "local",
         "count": len(TOP_TOURNAMENTS),
         "matches": [
             {

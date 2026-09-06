@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -8,26 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Team, Tournament
 from app.providers.sstats import SStatsProvider
+from app.tournament_logos import local_tournament_logo_path
 
 router = APIRouter()
 
-TOURNAMENT_LOGO_DIR = Path(__file__).resolve().parent / 'static' / 'tournament-logos'
-LOCAL_TOURNAMENT_LOGO_IDS = {2, 39, 61, 71, 78, 88, 94, 135, 140, 235, 262}
-
-
 def _local_tournament_logo(provider_id: int | str | None):
-    try:
-        logo_id = int(provider_id)
-    except (TypeError, ValueError):
-        return None
-    if logo_id not in LOCAL_TOURNAMENT_LOGO_IDS:
-        return None
-    path = TOURNAMENT_LOGO_DIR / f'{logo_id}.svg'
-    if not path.is_file():
+    path = local_tournament_logo_path(provider_id)
+    if path is None:
         return None
     return FileResponse(
         path,
-        media_type='image/svg+xml',
+        media_type='image/png',
         headers={'Cache-Control': 'public, max-age=31536000, immutable'},
     )
 

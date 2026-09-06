@@ -1,36 +1,55 @@
-"""Stable tournament branding helpers.
+"""Local tournament branding shared by the Mini App and the PWA."""
 
-SStats league ids for the popular competitions currently match API-Football v3
-competition ids. API-Sports exposes league logos from its public media CDN, so
-we can use those assets without spending API request quota.
-"""
+from pathlib import Path
 
-API_SPORTS_LEAGUE_LOGO = "https://media.api-sports.io/football/leagues/{league_id}.png"
+
+TOURNAMENT_LOGO_DIR = Path(__file__).resolve().parent / "static" / "tournament-logos"
 
 POPULAR_TOURNAMENTS = {
     2: {"name": "UEFA Champions League", "country": "World"},
     39: {"name": "Premier League", "country": "England"},
-    140: {"name": "La Liga", "country": "Spain"},
-    135: {"name": "Serie A", "country": "Italy"},
+    61: {"name": "Ligue 1", "country": "France"},
+    71: {"name": "Serie A", "country": "Brazil"},
     78: {"name": "Bundesliga", "country": "Germany"},
+    88: {"name": "Eredivisie", "country": "Netherlands"},
+    94: {"name": "Primeira Liga", "country": "Portugal"},
+    135: {"name": "Serie A", "country": "Italy"},
+    140: {"name": "La Liga", "country": "Spain"},
+    235: {"name": "Russian Premier League", "country": "Russia"},
+    262: {"name": "Liga MX", "country": "Mexico"},
 }
 
 
-def tournament_logo_url(provider_id: int | None, name: str | None = None, country: str | None = None) -> str | None:
-    """Return a trusted logo URL only for the five explicitly mapped competitions."""
+def _normalized_provider_id(provider_id: int | str | None) -> int | None:
     if provider_id is None:
         return None
     try:
-        provider_id = int(provider_id)
+        return int(provider_id)
     except (TypeError, ValueError):
         return None
-    expected = POPULAR_TOURNAMENTS.get(provider_id)
-    if not expected:
+
+
+def local_tournament_logo_path(provider_id: int | str | None) -> Path | None:
+    """Return a bundled PNG path for a configured competition."""
+    logo_id = _normalized_provider_id(provider_id)
+    if logo_id not in POPULAR_TOURNAMENTS:
         return None
-    if name and expected["name"].casefold() != str(name).strip().casefold():
-        # Champions League names can arrive with the UEFA prefix; other ids are exact.
-        if provider_id != 2 or "champions league" not in str(name).casefold():
-            return None
-    if country and provider_id != 2 and expected["country"].casefold() != str(country).strip().casefold():
+    path = TOURNAMENT_LOGO_DIR / f"{logo_id}.png"
+    return path if path.is_file() else None
+
+
+def tournament_logo_url(
+    provider_id: int | str | None,
+    name: str | None = None,
+    country: str | None = None,
+) -> str | None:
+    """Return the same-origin URL of a bundled tournament emblem.
+
+    ``name`` and ``country`` remain accepted for callers using the old helper
+    signature. The provider id is the stable mapping key.
+    """
+    del name, country
+    logo_id = _normalized_provider_id(provider_id)
+    if local_tournament_logo_path(logo_id) is None:
         return None
-    return API_SPORTS_LEAGUE_LOGO.format(league_id=provider_id)
+    return f"/static/tournament-logos/{logo_id}.png?v=2"

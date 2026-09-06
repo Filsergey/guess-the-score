@@ -1,6 +1,6 @@
 (()=>{
 const LOGOS={
-  2:'/static/tournament-logos/2.svg?v=1',39:'/static/tournament-logos/39.svg?v=1',140:'/static/tournament-logos/140.svg?v=1',78:'/static/tournament-logos/78.svg?v=1',135:'/static/tournament-logos/135.svg?v=1',61:'/static/tournament-logos/61.svg?v=1',88:'/static/tournament-logos/88.svg?v=1',71:'/static/tournament-logos/71.svg?v=1',94:'/static/tournament-logos/94.svg?v=1',262:'/static/tournament-logos/262.svg?v=1',235:'/static/tournament-logos/235.svg?v=1'
+  2:'/static/tournament-logos/2.png?v=2',39:'/static/tournament-logos/39.png?v=2',140:'/static/tournament-logos/140.png?v=2',78:'/static/tournament-logos/78.png?v=2',135:'/static/tournament-logos/135.png?v=2',61:'/static/tournament-logos/61.png?v=2',88:'/static/tournament-logos/88.png?v=2',71:'/static/tournament-logos/71.png?v=2',94:'/static/tournament-logos/94.png?v=2',262:'/static/tournament-logos/262.png?v=2',235:'/static/tournament-logos/235.png?v=2'
 };
 window.GTS_LOCAL_TOURNAMENT_LOGOS=LOGOS;
 function tournamentFor(league){

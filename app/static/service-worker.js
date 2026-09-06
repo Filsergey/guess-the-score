@@ -1,8 +1,8 @@
-const CACHE_NAME='guess-the-score-pwa-v3';
+const CACHE_NAME='guess-the-score-pwa-v4';
 const STATIC_ASSETS=[
   '/static/manifest.webmanifest?v=2',
   '/static/pwa-icon.svg?v=2',
-  '/static/pwa.js?v=3'
+  '/static/pwa.js?v=4'
 ];
 
 self.addEventListener('install',event=>{

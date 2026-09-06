@@ -13,6 +13,7 @@ from app.localization import round_name_ru, team_name_ru
 from app.match_status import FINAL_MATCH_STATUSES, status_group, status_label_ru
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, Tournament, User, UserLeague
 from app.predictions import match_is_final, prediction_points
+from app.tournament_logos import tournament_logo_url
 router=APIRouter(prefix='/api/leagues',tags=['leagues'])
 class LeagueCreate(BaseModel):
  name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);tournament_id:int|None=None;is_private:bool=True;include_oracle:bool=True
@@ -49,7 +50,7 @@ async def _eligible_final_matches(db,league,user=None):
 @router.get('/tournaments')
 async def league_tournaments(db:AsyncSession=Depends(get_db)):
  rows=(await db.execute(select(Tournament,Match.season,func.count(Match.id)).join(Match,Match.tournament_id==Tournament.id).where(Tournament.provider=='sstats',Match.provider=='sstats').group_by(Tournament.id,Match.season).order_by(Match.season.desc(),Tournament.name))).all()
- return {'count':len(rows),'response':[{'id':t.id,'provider':'sstats','provider_id':t.provider_id,'name':t.name,'country':t.country,'logo_url':t.logo_url,'season':int(season),'match_count':int(count or 0)} for t,season,count in rows]}
+ return {'count':len(rows),'response':[{'id':t.id,'provider':'sstats','provider_id':t.provider_id,'name':t.name,'country':t.country,'logo_url':tournament_logo_url(t.provider_id),'season':int(season),'match_count':int(count or 0)} for t,season,count in rows]}
 @router.get('/mine')
 async def my_leagues(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  sq=select(LeagueMember.league_id,func.count(LeagueMember.id).label('member_count')).group_by(LeagueMember.league_id).subquery();rows=(await db.execute(select(UserLeague,LeagueMember.role,sq.c.member_count).join(LeagueMember,LeagueMember.league_id==UserLeague.id).outerjoin(sq,sq.c.league_id==UserLeague.id).where(LeagueMember.user_id==user.id).order_by(UserLeague.created_at))).all();items=[serialize_league(l,r,int(c or 0)) for l,r,c in rows];return {'count':len(items),'response':items}
