@@ -64,6 +64,26 @@ def _season_rows(row: dict) -> list[dict]:
     return result
 
 
+def _catalog_priority(item: dict) -> tuple:
+    """Put the five most recognisable club competitions first, then keep the rest alphabetical."""
+    name = str(item.get("name") or "").lower().replace("-", " ")
+    country = str(item.get("country") or "").lower()
+    popular = (
+        (0, ("champions league",)),
+        (1, ("premier league",)),
+        (2, ("la liga", "laliga", "primera division")),
+        (3, ("serie a",)),
+        (4, ("bundesliga",)),
+    )
+    for rank, aliases in popular:
+        if any(alias in name for alias in aliases):
+            # Avoid accidentally prioritising similarly named youth/women/reserve competitions.
+            if any(word in name for word in ("women", "woman", "femin", "u19", "u21", "u23", "youth", "reserve")):
+                break
+            return (0, rank, country, name)
+    return (1, 99, country, name)
+
+
 async def _theme_league(league_id: int, user: User, db: AsyncSession) -> UserLeague:
     league = await db.get(UserLeague, league_id)
     if league is None:
@@ -112,7 +132,7 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
             "logo_url": _pick(row, "logoUrl", "LogoUrl", "logo", "Logo"),
             "seasons": seasons,
         })
-    result.sort(key=lambda x: ((x["country"] or ""), x["name"]))
+    result.sort(key=_catalog_priority)
     return {"count": len(result), "response": result}
 
 
