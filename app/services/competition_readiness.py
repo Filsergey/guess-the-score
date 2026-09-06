@@ -7,10 +7,7 @@ from app.database import SessionLocal
 from app.models import Match, Player, Team, Tournament
 from app.players import sync_sstats_team_players
 from app.providers.sstats import SStatsProvider
-from app.services.competition_prepare import (
-    _hydrate_missing_logos_from_api_football,
-    prepare_sstats_competition,
-)
+from app.services.competition_prepare import prepare_sstats_competition
 from app.services.sstats_sync import SSTATS_PROVIDER
 
 
@@ -18,7 +15,7 @@ _background_tasks: set[asyncio.Task] = set()
 
 
 def _allowed_missing(total_teams: int) -> int:
-    """A small gap means roughly 10% of clubs, but never more than two clubs."""
+    """A small player-roster gap means roughly 10% of clubs, but never more than two."""
     if total_teams <= 0:
         return 0
     return min(2, max(1, math.ceil(total_teams * 0.10)))
@@ -124,11 +121,12 @@ def _schedule_player_background(team_ids: list[int], year: int) -> None:
 
 
 async def prepare_sstats_competition_tolerant(session, league_id: int, year: int, league_name: str):
-    """Attempt a complete preload, but tolerate only a small residual gap.
+    """Bulk-load the competition before league creation, tolerating only small roster gaps.
 
-    We still wait while matches, team metadata, crests and player rosters are fetched for
-    every participating club. Creation is allowed only when at most ~10% (max two clubs)
-    still miss a crest or a usable player roster. Those few gaps continue in background.
+    Matches and teams remain mandatory. Player rosters are mass-loaded and at most ~10%
+    (maximum two clubs) may still be incomplete. Team crests are always non-blocking:
+    the foreground preparation tries to load them, but any missing crests are left for
+    the existing background logo-repair task from ``prepare_sstats_competition``.
     """
     strict_result = None
     strict_error = None
@@ -150,14 +148,6 @@ async def prepare_sstats_competition_tolerant(session, league_id: int, year: int
             raise strict_error
         raise RuntimeError("Турнир подготовлен не полностью")
 
-    # Before deciding that crests are missing, make one foreground fallback pass.
-    if snapshot["missing_logos"]:
-        try:
-            await _hydrate_missing_logos_from_api_football(session, snapshot["missing_logos"])
-        except Exception:
-            await session.rollback()
-        snapshot = await _readiness_snapshot(session, league_id, year)
-
     allowed = snapshot["allowed_missing"]
     missing_players = snapshot["missing_players"]
     missing_logos = snapshot["missing_logos"]
@@ -170,14 +160,8 @@ async def prepare_sstats_competition_tolerant(session, league_id: int, year: int
             f"нет составов у {len(missing_players)} из {len(teams)} команд ({preview}{suffix})"
         )
 
-    if len(missing_logos) > allowed:
-        preview = ", ".join(team.name for team in missing_logos[:5])
-        suffix = "…" if len(missing_logos) > 5 else ""
-        raise RuntimeError(
-            f"Массовая загрузка логотипов завершена не полностью: "
-            f"нет эмблем у {len(missing_logos)} из {len(teams)} команд ({preview}{suffix})"
-        )
-
+    # Missing crests never block creation. ``prepare_sstats_competition`` has already
+    # scheduled its logo recovery worker, which retries SStats/API-Football in background.
     if missing_players:
         _schedule_player_background([int(team.id) for team in missing_players], int(year))
 
@@ -189,9 +173,10 @@ async def prepare_sstats_competition_tolerant(session, league_id: int, year: int
             "teams_ready": len(teams),
             "team_logos_ready": len(teams) - len(missing_logos),
             "team_logos_pending": [team.name for team in missing_logos],
+            "logo_background_scheduled": bool(missing_logos),
             "teams_with_players": len(teams) - len(missing_players),
             "players_pending": [team.name for team in missing_players],
-            "allowed_missing_teams": allowed,
+            "allowed_missing_player_teams": allowed,
             "partial_metadata_allowed": bool(missing_players or missing_logos),
             "player_background_scheduled": bool(missing_players),
         }
