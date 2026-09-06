@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_login_client_id: str = ""
     telegram_login_client_secret: str = ""
+    webpush_vapid_public_key: str = ""
+    webpush_vapid_private_key: str = ""
+    webpush_subject: str = "mailto:admin@example.com"
     jwt_secret: str = ""
     jwt_access_minutes: int = 60 * 24 * 7
     superadmin_telegram_id: int | None = None
