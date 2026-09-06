@@ -73,13 +73,14 @@ async def lifespan(_:FastAPI):
   for task in tasks:
    with suppress(asyncio.CancelledError):await task
 
-app=FastAPI(title=settings.app_name,version='0.37.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.37.1',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8')
+ html=html.replace('<script src="/static/core-v2.js?v=3"></script><script src="/static/app-shell.js?v=6"></script>','')
  scripts=(
   '<script src="/static/core-v2.js?v=4"></script>'
   '<script src="/static/app-shell.js?v=21"></script>'
