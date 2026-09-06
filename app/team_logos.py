@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.models import Team
 from app.providers.sstats import SStatsProvider
-from app.providers.uefa import UEFAProvider
 
 router = APIRouter()
 
@@ -35,25 +34,6 @@ async def _proxy(url: str) -> Response:
         raise
     except Exception:
         raise HTTPException(502, 'Team logo unavailable')
-
-
-async def _restore_uefa_logo(team: Team, db: AsyncSession) -> str | None:
-    if not team.uefa_id:
-        return None
-    for season_year in (2027, 2026, 2028):
-        try:
-            rows = await UEFAProvider().competition_teams(1, season_year)
-        except Exception:
-            continue
-        u = next((x for x in rows if x.id == team.uefa_id), None)
-        if not u:
-            continue
-        url = u.logo_medium_url or u.logo_url or u.logo_big_url or u.logo_small_url
-        if url:
-            team.logo_url = url
-            await db.commit()
-            return url
-    return None
 
 
 async def _restore_sstats_logo(team: Team, db: AsyncSession) -> str | None:
@@ -90,15 +70,12 @@ async def team_logo_by_db_id(team_id: int, db: AsyncSession = Depends(get_db)):
     if not url:
         url = await _restore_sstats_logo(team, db)
     if not url:
-        # Keep the existing UEFA fallback only for teams that already have a UEFA mapping.
-        url = await _restore_uefa_logo(team, db)
-    if not url:
         raise HTTPException(404, 'Team logo not loaded yet')
 
     try:
         return await _proxy(url)
     except HTTPException:
-        fresh = await _restore_sstats_logo(team, db) or await _restore_uefa_logo(team, db)
+        fresh = await _restore_sstats_logo(team, db)
         if fresh and fresh != url:
             return await _proxy(fresh)
         raise
