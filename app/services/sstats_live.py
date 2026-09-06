@@ -54,18 +54,17 @@ async def _competition_scopes(db:AsyncSession,fallback_season:int)->list[tuple[i
 
 
 async def sync_sstats_live_matches(db:AsyncSession,season:int)->dict:
-    """Refresh live games for every SStats tournament currently used by a user league.
+    """Refresh LIVE games while keeping SStats request volume bounded.
 
-    Besides Live=true, re-check matches around their kickoff time. Some SStats competitions
-    can lag in the live listing while Games/{id} already has the current status/score.
+    LeagueId + Year is supported directly by Games/list, so we deliberately avoid
+    resolving /Leagues on every 30-second tick. Only a small number of near-kickoff
+    matches are checked individually as a fallback for delayed Live=true results.
     """
     provider=SStatsProvider();scopes=await _competition_scopes(db,season);now=datetime.now(timezone.utc);changed=live_received=live_matched=stale_checked=finished_captured=kickoff_checked=0;live_ids=set();errors=[];scope_results=[]
 
     for tournament_id,league_id,scope_season in scopes:
         try:
-            season_info=await provider.resolve_season_uid(league_id,scope_season)
-            kwargs={"season_uid":season_info["uid"]} if season_info and season_info.get("uid") else {"league_id":league_id,"year":scope_season}
-            payload=await provider.get_games(**kwargs,live=True,limit=1000)
+            payload=await provider.get_games(league_id=league_id,year=scope_season,live=True,limit=1000)
             rows=_rows(payload);scope_live_ids={str(_pick(row,"id","Id")) for row in rows if _pick(row,"id","Id") is not None};live_ids.update(scope_live_ids);live_received+=len(rows)
             incoming=list(scope_live_ids)
             matches=(await db.execute(select(Match).where(Match.provider=="sstats",Match.tournament_id==tournament_id,Match.provider_id.in_(incoming)))).scalars().all() if incoming else []
@@ -82,8 +81,9 @@ async def sync_sstats_live_matches(db:AsyncSession,season:int)->dict:
     scope_seasons={s for _,_,s in scopes}
     db_live=(await db.execute(select(Match).where(Match.provider=="sstats",Match.tournament_id.in_(scope_tournament_ids),Match.season.in_(scope_seasons),Match.status_short.in_(tuple(LIVE_MATCH_STATUSES))))).scalars().all() if scope_tournament_ids else []
 
-    # Re-check DB-live games that disappeared from Live=true so FT is captured immediately.
-    for match in db_live:
+    # A DB-live match that vanished from Live=true may just have finished. Limit these
+    # detail requests too, because each Games/{id} consumes one SStats request.
+    for match in db_live[:4]:
         if str(match.provider_id) in live_ids:continue
         try:
             row=_first(await provider.get_game(int(match.provider_id)));stale_checked+=1
@@ -93,17 +93,18 @@ async def sync_sstats_live_matches(db:AsyncSession,season:int)->dict:
         except Exception as exc:
             if len(errors)<12:errors.append({"match_id":match.id,"provider_id":str(match.provider_id),"stage":"stale-live","error":type(exc).__name__})
 
-    # Important fallback for domestic leagues: inspect games around kickoff even if Live=true is late/empty.
+    # Domestic competitions sometimes lag in Live=true. Probe only the nearest few
+    # kickoffs instead of up to twenty games every 30 seconds.
     if scope_tournament_ids:
         candidates=(await db.execute(
             select(Match).where(
                 Match.provider=="sstats",
                 Match.tournament_id.in_(scope_tournament_ids),
                 Match.season.in_(scope_seasons),
-                Match.kickoff_at>=now-timedelta(hours=4),
-                Match.kickoff_at<=now+timedelta(minutes=20),
+                Match.kickoff_at>=now-timedelta(hours=3),
+                Match.kickoff_at<=now+timedelta(minutes=10),
                 ~Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),
-            ).order_by(Match.kickoff_at).limit(20)
+            ).order_by(Match.kickoff_at).limit(4)
         )).scalars().all()
         for match in candidates:
             if str(match.provider_id) in live_ids:continue
