@@ -38,7 +38,17 @@ function applyCards(){
 }
 function applyTournamentBranding(){applyHeader();applyCards()}
 const style=document.createElement('style');
-style.textContent=`#leagueSelect.has-tournament-brand{padding-left:58px}#leagueSelect .selector-icon.has-tournament-logo{left:12px;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;overflow:hidden;background:rgba(255,255,255,.05)}#leagueSelect .selector-icon.has-tournament-logo img{width:36px;height:36px;object-fit:contain;display:block}.league-emblem.has-tournament-logo img{width:100%;height:100%;object-fit:contain;padding:6px}@media(max-width:430px){#leagueSelect.has-tournament-brand{padding-left:48px}#leagueSelect .selector-icon.has-tournament-logo{left:7px;width:34px;height:34px}#leagueSelect .selector-icon.has-tournament-logo img{width:32px;height:32px}}`;
+style.textContent=`
+#leagueSelect.has-tournament-brand{padding-left:58px}
+#leagueSelect .selector-icon.has-tournament-logo{left:12px;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;overflow:hidden;background:#fff;border:1px solid rgba(255,255,255,.9);box-shadow:0 2px 10px rgba(0,0,0,.18)}
+#leagueSelect .selector-icon.has-tournament-logo img{width:34px;height:34px;object-fit:contain;display:block;padding:3px}
+#leaguesView .league-emblem.has-tournament-logo{background:#fff!important;border-color:rgba(255,255,255,.88)!important;box-shadow:0 2px 9px rgba(0,0,0,.16)}
+#leaguesView .league-emblem.has-tournament-logo img{width:100%;height:100%;object-fit:contain;padding:7px}
+@media(max-width:430px){
+  #leagueSelect.has-tournament-brand{padding-left:48px}
+  #leagueSelect .selector-icon.has-tournament-logo{left:7px;width:34px;height:34px}
+  #leagueSelect .selector-icon.has-tournament-logo img{width:30px;height:30px;padding:3px}
+}`;
 document.head.appendChild(style);
 document.addEventListener('gts:ready',()=>setTimeout(applyTournamentBranding,120));
 document.addEventListener('gts:league-change',()=>setTimeout(applyTournamentBranding,120));
