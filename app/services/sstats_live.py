@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.match_status import FINAL_MATCH_STATUSES, LIVE_MATCH_STATUSES
 from app.models import Match, Tournament, UserLeague
 from app.providers.sstats import SStatsProvider
+from app.services.push_notifications import process_push_notifications
 from app.services.sstats_sync import _normalize_status, _pick
 
 
@@ -115,4 +116,8 @@ async def sync_sstats_live_matches(db:AsyncSession,season:int)->dict:
                 if len(errors)<12:errors.append({"match_id":match.id,"provider_id":str(match.provider_id),"stage":"kickoff-window","error":type(exc).__name__})
 
     await db.commit()
-    return {"season_fallback":season,"competitions":len(scopes),"scopes":scope_results,"live_received":live_received,"live_matched":live_matched,"db_live_before":len(db_live),"stale_live_checked":stale_checked,"kickoff_window_checked":kickoff_checked,"finished_captured":finished_captured,"changed":changed,"live_ids":sorted(live_ids),"errors":errors,"synced_at":datetime.now(timezone.utc).isoformat()}
+    try:
+        push=await process_push_notifications(db)
+    except Exception as exc:
+        push={"configured":False,"sent":0,"error":type(exc).__name__}
+    return {"season_fallback":season,"competitions":len(scopes),"scopes":scope_results,"live_received":live_received,"live_matched":live_matched,"db_live_before":len(db_live),"stale_live_checked":stale_checked,"kickoff_window_checked":kickoff_checked,"finished_captured":finished_captured,"changed":changed,"live_ids":sorted(live_ids),"errors":errors,"push":push,"synced_at":datetime.now(timezone.utc).isoformat()}
