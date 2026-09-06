@@ -3,10 +3,14 @@ const modal=document.getElementById('modal');
 const box=document.getElementById('sheetContent');
 if(!modal||!box)return;
 let restoring=false;
+function abortMatch(){
+  try{document.dispatchEvent(new CustomEvent('gts:force-close-sheet'))}catch{}
+  try{if(typeof window.openMatchDetail==='function')window.openMatchDetail(Number.NaN)}catch{}
+}
 function hardClose(){
   if(restoring)return;
   restoring=true;
-  try{document.dispatchEvent(new CustomEvent('gts:force-close-sheet'))}catch{}
+  abortMatch();
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden','true');
   modal.style.setProperty('display','none','important');
