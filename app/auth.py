@@ -1,20 +1,22 @@
 from datetime import datetime, timezone
 
+import httpx
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.models import User
+from app.models import LeagueMember, Tournament, User, UserLeague
 from app.security import create_access_token, decode_access_token, verify_telegram_init_data
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 bearer = HTTPBearer(auto_error=False)
 settings = get_settings()
+_bot_username_cache: str | None = None
 
 
 class TelegramLoginRequest(BaseModel):
@@ -50,6 +52,27 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="User not found")
     return user
+
+
+async def _telegram_bot_username() -> str:
+    global _bot_username_cache
+    if _bot_username_cache:
+        return _bot_username_cache
+    token = (settings.telegram_bot_token or "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="TELEGRAM_BOT_TOKEN не настроен")
+    try:
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+            response.raise_for_status()
+            payload = response.json()
+        username = str((payload.get("result") or {}).get("username") or "").strip().lstrip("@")
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail="Не удалось получить username Telegram-бота") from exc
+    if not username:
+        raise HTTPException(status_code=502, detail="Telegram-бот не вернул username")
+    _bot_username_cache = username
+    return username
 
 
 @router.post("/telegram")
@@ -106,3 +129,60 @@ async def telegram_login(body: TelegramLoginRequest, db: AsyncSession = Depends(
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)) -> dict:
     return serialize_user(user)
+
+
+@router.get("/league-invite/{invite_code}")
+async def league_invite_preview(
+    invite_code: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    code = invite_code.strip().upper()
+    if len(code) < 4 or len(code) > 12:
+        raise HTTPException(status_code=404, detail="Лига не найдена")
+    league = await db.scalar(select(UserLeague).where(UserLeague.invite_code == code))
+    if league is None:
+        raise HTTPException(status_code=404, detail="Лига не найдена или приглашение устарело")
+    member = await db.scalar(
+        select(LeagueMember).where(
+            LeagueMember.league_id == league.id,
+            LeagueMember.user_id == user.id,
+        )
+    )
+    count = await db.scalar(
+        select(func.count(LeagueMember.id)).where(LeagueMember.league_id == league.id)
+    )
+    tournament = await db.get(Tournament, league.tournament_id) if league.tournament_id else None
+    return {
+        "already_member": member is not None,
+        "league": {
+            "id": league.id,
+            "name": league.name,
+            "member_count": int(count or 0),
+            "tournament_name": tournament.name if tournament else "SStats",
+            "tournament_season": league.tournament_season,
+        },
+    }
+
+
+@router.get("/league-invite-link/{league_id}")
+async def league_invite_link(
+    league_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    league = await db.get(UserLeague, league_id)
+    if league is None:
+        raise HTTPException(status_code=404, detail="Лига не найдена")
+    if league.owner_user_id != user.id and user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Ссылкой приглашения управляет владелец лиги")
+    username = await _telegram_bot_username()
+    start_param = f"league_{league.invite_code}"
+    return {
+        "league_id": league.id,
+        "league_name": league.name,
+        "invite_code": league.invite_code,
+        "bot_username": username,
+        "start_param": start_param,
+        "url": f"https://t.me/{username}?startapp={start_param}",
+    }
