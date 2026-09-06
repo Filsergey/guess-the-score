@@ -4,7 +4,7 @@ import string
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from app.auth import get_current_user
@@ -70,6 +70,16 @@ async def join_league(body:LeagueJoin,user:User=Depends(get_current_user),db:Asy
  m=await db.scalar(select(LeagueMember).where(LeagueMember.league_id==l.id,LeagueMember.user_id==user.id))
  if m is None:m=LeagueMember(league_id=l.id,user_id=user.id,role='member',joined_at=datetime.now(timezone.utc));db.add(m);await db.commit()
  c=await db.scalar(select(func.count(LeagueMember.id)).where(LeagueMember.league_id==l.id));return serialize_league(l,m.role,int(c or 0))
+@router.delete('/{league_id}')
+async def delete_league(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ l=await db.get(UserLeague,league_id)
+ if l is None:raise HTTPException(404,'League not found')
+ if l.owner_user_id!=user.id and user.role!='superadmin':raise HTTPException(403,'Only the league owner can delete it')
+ name=l.name
+ await db.execute(delete(LeagueMember).where(LeagueMember.league_id==league_id))
+ await db.delete(l)
+ await db.commit()
+ return {'ok':True,'id':league_id,'name':name}
 @router.get('/{league_id}/members')
 async def league_members(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  membership=await _membership(league_id,user,db);l=await db.get(UserLeague,league_id)
