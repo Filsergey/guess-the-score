@@ -30,10 +30,8 @@ from app.providers.sstats import SStatsProvider
 from app.services.oracle_scheduler import oracle_scheduler_loop
 from app.services.sstats_live import sync_sstats_live_matches
 from app.services.sstats_sync import sync_sstats_champions_league, sync_sstats_team_metadata
-settings=get_settings();STATIC_DIR=Path(__file__).resolve().parent/'static'
-AUTO_SYNC_INTERVAL_SECONDS=3600;LIVE_SYNC_INTERVAL_SECONDS=30
-sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
-live_sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
+settings=get_settings();STATIC_DIR=Path(__file__).resolve().parent/'static';AUTO_SYNC_INTERVAL_SECONDS=3600;LIVE_SYNC_INTERVAL_SECONDS=30
+sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None};live_sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
 def _current_sstats_season():
  now=datetime.now(timezone.utc);return now.year if now.month>=7 else now.year-1
 async def _automatic_sstats_sync_once():
@@ -59,19 +57,19 @@ async def automatic_live_sync_loop():
 @asynccontextmanager
 async def lifespan(_:FastAPI):
  async with engine.begin() as conn:await conn.run_sync(Base.metadata.create_all);await migrate_provider_keys(conn)
- scheduler_task=asyncio.create_task(oracle_scheduler_loop()) if settings.oracle_scheduler_enabled else None;player_bootstrap_task=asyncio.create_task(bootstrap_popular_players());sstats_sync_task=asyncio.create_task(automatic_sstats_sync_loop());live_sync_task=asyncio.create_task(automatic_live_sync_loop())
+ tasks=[asyncio.create_task(bootstrap_popular_players()),asyncio.create_task(automatic_sstats_sync_loop()),asyncio.create_task(automatic_live_sync_loop())]
+ if settings.oracle_scheduler_enabled:tasks.append(asyncio.create_task(oracle_scheduler_loop()))
  try:yield
  finally:
-  for task in (scheduler_task,player_bootstrap_task,sstats_sync_task,live_sync_task):
-   if task:task.cancel()
-   if task:
-    with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.31.0',lifespan=lifespan)
+  for task in tasks:task.cancel()
+  for task in tasks:
+   with suppress(asyncio.CancelledError):await task
+app=FastAPI(title=settings.app_name,version='0.32.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/live-standings.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=4"></script><script src="/static/match-detail.js?v=3"></script><script src="/static/match-feed.js?v=6"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=4"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/live-standings.js?v=1"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=4"></script><script src="/static/match-pitch.js?v=1"></script><script src="/static/match-detail.js?v=4"></script><script src="/static/match-feed.js?v=6"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
@@ -137,10 +135,11 @@ async def match_rich_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  except Exception as e:errors.append(f'game:{type(e).__name__}')
  try:gl=_first_item(await p.get_glicko(m.provider_id))
  except Exception as e:errors.append(f'glicko:{type(e).__name__}')
- d=_merge(qd,gd) if (qd or gd) else {}
- rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'lineups':{'home':{'formation':None,'starting':[],'bench':[]},'away':{'formation':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
+ d=_merge(qd,gd) if (qd or gd) else {};rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'player_stats':[],'lineups':{'home':{'formation':None,'coach':None,'starting':[],'bench':[]},'away':{'formation':None,'coach':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
  if not d and not gl and not full:return {**base,'details_available':False,'details_source':None,'details_errors':errors,'details':None}
  details=serialize_sstats_details(d,gl);details.update(rich)
  if rich.get('venue_full') and not details.get('venue',{}).get('name'):details['venue']=rich['venue_full']
+ if not details.get('coaches',{}).get('home'):details['coaches']['home']=rich.get('lineups',{}).get('home',{}).get('coach')
+ if not details.get('coaches',{}).get('away'):details['coaches']['away']=rich.get('lineups',{}).get('away',{}).get('coach')
  source='games/query' if qd else 'games/{id}';source+='+full' if full else '';source+='+glicko' if gl else ''
  return {**base,'details_available':True,'details_source':source,'details_errors':errors,'details':details}
