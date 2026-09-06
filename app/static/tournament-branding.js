@@ -13,13 +13,14 @@ function tournamentForLeague(league){
 }
 function img(logo){return `<img src="${logo}" alt="" loading="eager">`}
 function applyHeader(){
-  const icon=document.querySelector('#leagueSelect .selector-icon');
-  if(!icon)return;
+  const box=document.getElementById('leagueSelect'),icon=box?.querySelector('.selector-icon');
+  if(!box||!icon)return;
   const tournament=tournamentForLeague(window.getSelectedLeague?.());
   const logo=LOGOS[Number(tournament?.provider_id)];
-  if(!logo)return;
+  if(!logo){box.classList.remove('has-tournament-brand');return}
   icon.innerHTML=img(logo);
   icon.classList.add('has-tournament-logo');
+  box.classList.add('has-tournament-brand');
 }
 function applyCards(){
   const leagues=window.getLeagues?.()||[];
@@ -37,7 +38,7 @@ function applyCards(){
 }
 function applyTournamentBranding(){applyHeader();applyCards()}
 const style=document.createElement('style');
-style.textContent=`#leagueSelect .selector-icon.has-tournament-logo{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;overflow:hidden;background:rgba(255,255,255,.08);flex:0 0 34px}#leagueSelect .selector-icon.has-tournament-logo img{width:30px;height:30px;object-fit:contain;display:block}.league-emblem.has-tournament-logo img{width:100%;height:100%;object-fit:contain;padding:6px}`;
+style.textContent=`#leagueSelect.has-tournament-brand{padding-left:58px}#leagueSelect .selector-icon.has-tournament-logo{left:12px;width:38px;height:38px;border-radius:10px;display:grid;place-items:center;overflow:hidden;background:rgba(255,255,255,.05)}#leagueSelect .selector-icon.has-tournament-logo img{width:36px;height:36px;object-fit:contain;display:block}.league-emblem.has-tournament-logo img{width:100%;height:100%;object-fit:contain;padding:6px}@media(max-width:430px){#leagueSelect.has-tournament-brand{padding-left:48px}#leagueSelect .selector-icon.has-tournament-logo{left:7px;width:34px;height:34px}#leagueSelect .selector-icon.has-tournament-logo img{width:32px;height:32px}}`;
 document.head.appendChild(style);
 document.addEventListener('gts:ready',()=>setTimeout(applyTournamentBranding,120));
 document.addEventListener('gts:league-change',()=>setTimeout(applyTournamentBranding,120));
