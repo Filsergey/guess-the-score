@@ -77,5 +77,55 @@ async function openCreateLeagueTopOnly(){
  }
 }
 window.clearCreateLeagueCatalogCache=()=>{try{sessionStorage.removeItem(CATALOG_CACHE_KEY)}catch{}};
-setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly},0);
+
+function installCreateProgress(){
+ if(typeof window.createLeague!=='function'||window.createLeague.__gtsProgress)return false;
+ const original=window.createLeague;
+ const style=document.createElement('style');
+ style.textContent=`
+ .gts-create-progress{display:none;align-items:center;justify-content:center;gap:8px;min-height:22px;margin:9px 2px 0;color:var(--muted,#8fa4b9);font-size:11px;line-height:1;white-space:nowrap;overflow:hidden}
+ .gts-create-progress.show{display:flex}
+ .gts-create-progress .gts-create-spinner{width:12px;height:12px;flex:0 0 12px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:gtsCreateSpin .7s linear infinite}
+ .gts-create-progress .gts-create-progress-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .gts-create-progress.error{color:#ff5a68}.gts-create-progress.done{color:#31c98b}
+ @keyframes gtsCreateSpin{to{transform:rotate(360deg)}}`;
+ document.head.appendChild(style);
+ function line(){
+  let el=document.getElementById('gtsCreateLeagueProgress');
+  if(el)return el;
+  const btn=document.getElementById('createLeagueBtn');if(!btn)return null;
+  el=document.createElement('div');el.id='gtsCreateLeagueProgress';el.className='gts-create-progress';el.setAttribute('aria-live','polite');
+  el.innerHTML='<span class="gts-create-spinner"></span><span class="gts-create-progress-text"></span>';
+  btn.insertAdjacentElement('afterend',el);return el;
+ }
+ function setLine(text,state='working'){
+  const el=line();if(!el)return;el.className=`gts-create-progress show ${state==='error'?'error':state==='done'?'done':''}`;
+  const spinner=el.querySelector('.gts-create-spinner');if(spinner)spinner.style.display=state==='working'?'block':'none';
+  const copy=el.querySelector('.gts-create-progress-text');if(copy)copy.textContent=text;
+ }
+ const wrapped=async function(...args){
+  const btn=document.getElementById('createLeagueBtn');
+  const started=Date.now();let lastButton='';
+  setLine('Подготавливаем турнир: матчи, команды и игроки · 0 с');
+  const render=()=>{
+   const text=String(btn?.textContent||'');const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
+   if(/Созда[её]м лигу/i.test(text))setLine(`Данные готовы · создаём лигу · ${sec} с`);
+   else setLine(`Подготавливаем турнир: матчи, команды и игроки · ${sec} с`);
+   lastButton=text;
+  };
+  render();
+  const observer=btn?new MutationObserver(()=>{if(String(btn.textContent||'')!==lastButton)render()}):null;observer?.observe(btn,{childList:true,subtree:true,characterData:true});
+  const timer=setInterval(render,1000);
+  try{
+   const result=await original.apply(this,args);
+   if(!document.getElementById('modal')?.classList.contains('open'))setLine('Лига создана','done');
+   else if(String(btn?.textContent||'').trim()==='Создать лигу')setLine('Операция остановлена · проверь сообщение выше','error');
+   return result;
+  }catch(e){setLine('Ошибка загрузки · попробуй ещё раз','error');throw e}
+  finally{clearInterval(timer);observer?.disconnect()}
+ };
+ wrapped.__gtsProgress=true;wrapped.__original=original;window.createLeague=wrapped;return true;
+}
+
+setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly;if(!installCreateProgress()){const t=setInterval(()=>{if(installCreateProgress())clearInterval(t)},50);setTimeout(()=>clearInterval(t),5000)}},0);
 })();
