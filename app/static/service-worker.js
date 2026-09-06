@@ -1,8 +1,8 @@
-const CACHE_NAME='guess-the-score-pwa-v2';
+const CACHE_NAME='guess-the-score-pwa-v3';
 const STATIC_ASSETS=[
   '/static/manifest.webmanifest?v=2',
   '/static/pwa-icon.svg?v=2',
-  '/static/pwa.js?v=2'
+  '/static/pwa.js?v=3'
 ];
 
 self.addEventListener('install',event=>{
@@ -28,7 +28,7 @@ self.addEventListener('fetch',event=>{
 
   event.respondWith((async()=>{
     try{
-      const response=await fetch(request);
+      const response=await fetch(request,{cache:'no-store'});
       if(response&&response.ok){
         const cache=await caches.open(CACHE_NAME);
         cache.put(request,response.clone()).catch(()=>{});
