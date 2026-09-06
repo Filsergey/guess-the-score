@@ -17,6 +17,7 @@ router=APIRouter(prefix='/api/leagues',tags=['leagues'])
 class LeagueCreate(BaseModel):
  name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);tournament_id:int|None=None;is_private:bool=True;include_oracle:bool=True
 class LeagueJoin(BaseModel):invite_code:str=Field(min_length=4,max_length=12)
+class LeagueUpdate(BaseModel):name:str=Field(min_length=2,max_length=120)
 def _invite_code(length=8):return ''.join(secrets.choice(string.ascii_uppercase+string.digits) for _ in range(length))
 def serialize_league(l,r,c):return {'id':l.id,'name':l.name,'invite_code':l.invite_code,'owner_user_id':l.owner_user_id,'member_role':r,'member_count':c,'tournament_provider':l.tournament_provider,'tournament_season':l.tournament_season,'tournament_id':l.tournament_id,'is_private':l.is_private,'include_oracle':l.include_oracle,'created_at':l.created_at}
 async def _unique_invite_code(db):
@@ -70,6 +71,18 @@ async def join_league(body:LeagueJoin,user:User=Depends(get_current_user),db:Asy
  m=await db.scalar(select(LeagueMember).where(LeagueMember.league_id==l.id,LeagueMember.user_id==user.id))
  if m is None:m=LeagueMember(league_id=l.id,user_id=user.id,role='member',joined_at=datetime.now(timezone.utc));db.add(m);await db.commit()
  c=await db.scalar(select(func.count(LeagueMember.id)).where(LeagueMember.league_id==l.id));return serialize_league(l,m.role,int(c or 0))
+@router.patch('/{league_id}')
+async def update_league(league_id:int,body:LeagueUpdate,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ l=await db.get(UserLeague,league_id)
+ if l is None:raise HTTPException(404,'League not found')
+ if l.owner_user_id!=user.id and user.role!='superadmin':raise HTTPException(403,'Only the league owner can change it')
+ name=body.name.strip()
+ if len(name)<2:raise HTTPException(422,'League name is too short')
+ l.name=name
+ await db.commit();await db.refresh(l)
+ c=await db.scalar(select(func.count(LeagueMember.id)).where(LeagueMember.league_id==league_id))
+ role='owner' if l.owner_user_id==user.id else 'superadmin'
+ return serialize_league(l,role,int(c or 0))
 @router.delete('/{league_id}')
 async def delete_league(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  l=await db.get(UserLeague,league_id)
