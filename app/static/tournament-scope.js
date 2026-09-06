@@ -1,0 +1,8 @@
+(()=>{
+const originalFetch=window.fetch.bind(window);
+function selected(){return window.getSelectedLeague?.()||null}
+window.fetch=function(input,init){try{const raw=typeof input==='string'?input:input?.url;if(raw&&raw.includes('/api/tournament-predictions/')){const l=selected();if(l?.tournament_id){const u=new URL(raw,location.origin);u.searchParams.set('provider',l.tournament_provider||'sstats');u.searchParams.set('season',String(l.tournament_season||2026));u.searchParams.set('tournament_id',String(l.tournament_id));input=typeof input==='string'?u.pathname+u.search:new Request(u.toString(),input)}}}catch{}return originalFetch(input,init)};
+function label(){const l=selected(),ts=window.getTournaments?.()||[],t=ts.find(x=>Number(x.id)===Number(l?.tournament_id)&&Number(x.season)===Number(l?.tournament_season))||ts.find(x=>Number(x.id)===Number(l?.tournament_id));if(!l)return'';const s=Number(l.tournament_season)||2026;return `${t?.name||'Турнир'} ${s}/${String(s+1).slice(-2)}`}
+const observer=new MutationObserver(()=>{const el=document.querySelector('.tp-sheet-head .sheet-round');if(el){const text=label();if(text)el.textContent=text.toUpperCase()}});observer.observe(document.body,{childList:true,subtree:true});
+document.addEventListener('gts:league-change',()=>setTimeout(()=>{const card=[...document.querySelectorAll('.tournament')].find(x=>(x.textContent||'').includes('Прогноз на турнир'));if(card&&window.openTournamentPrediction)card.onclick=window.openTournamentPrediction},0));
+})();
