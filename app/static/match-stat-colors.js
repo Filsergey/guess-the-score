@@ -14,6 +14,8 @@ style.textContent=`
 .md-stat-dot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
 .md-stat-dot.home{background:var(--md-stat-home)}
 .md-stat-dot.away{background:var(--md-stat-away)}
+.md-my-prediction{margin-top:5px;font-size:10px;line-height:1.2;font-weight:850;color:var(--md-stat-home);white-space:nowrap}
+.md-my-prediction span{font-size:12px;font-weight:950}
 html[data-gts-tournament-theme='ucl']{--md-stat-home:#20a7ff;--md-stat-away:#f5f9ff}
 html[data-gts-tournament-theme='laliga']{--md-stat-home:#a965ff;--md-stat-away:#ff4655}
 html[data-gts-tournament-theme='epl']{--md-stat-home:#37003c;--md-stat-away:#04f5ff}
@@ -24,8 +26,23 @@ html[data-gts-tournament-theme='laliga'] .md-stat-legend,html[data-gts-tournamen
 `;
 document.head.appendChild(style);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-function decorate(){
- const root=document.querySelector('#sheetContent [data-match-detail-id]');
+let predictions=null,predictionsPromise=null;
+async function getPredictions(){
+ if(predictions)return predictions;
+ if(predictionsPromise)return predictionsPromise;
+ predictionsPromise=(async()=>{try{const d=await window.GTS?.api?.('/api/predictions/mine');const map=new Map();for(const p of d?.response||[])map.set(Number(p.match_id),p);predictions=map;return map}catch(e){console.warn('match prediction badge',e);return new Map()}finally{predictionsPromise=null}})();
+ return predictionsPromise;
+}
+async function decoratePrediction(root){
+ if(!root||root.querySelector('.md-my-prediction'))return;
+ const score=root.querySelector('.match-detail-score');if(!score)return;
+ const id=Number(root.dataset.matchDetailId),map=await getPredictions();
+ if(!root.isConnected||Number(root.dataset.matchDetailId)!==id)return;
+ const p=map.get(id);if(!p)return;
+ const el=document.createElement('div');el.className='md-my-prediction';el.innerHTML=`Мой прогноз <span>${esc(p.home_score)}:${esc(p.away_score)}</span>`;
+ score.appendChild(el);
+}
+function decorateStats(root){
  const body=root?.querySelector('[data-md-body="stats"]');
  if(!root||!body||body.dataset.loaded!=='1'||body.querySelector('.md-stat-legend'))return;
  const id=Number(root.dataset.matchDetailId),match=window.GTS?.match?.(id);
@@ -34,7 +51,10 @@ function decorate(){
  legend.innerHTML=`<div class="md-stat-legend-side"><span class="md-stat-dot home"></span><span class="md-stat-legend-name">${esc(match.home?.name||'Хозяева')}</span></div><div class="md-stat-legend-side"><span class="md-stat-legend-name">${esc(match.away?.name||'Гости')}</span><span class="md-stat-dot away"></span></div>`;
  body.prepend(legend);
 }
+function decorate(){const root=document.querySelector('#sheetContent [data-match-detail-id]');if(!root)return;decorateStats(root);decoratePrediction(root)}
 new MutationObserver(()=>queueMicrotask(decorate)).observe(document.getElementById('sheetContent')||document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-loaded']});
 document.addEventListener('click',e=>{if(e.target?.closest?.('[data-md-toggle="stats"]'))setTimeout(decorate,60)},true);
+document.addEventListener('gts:league-change',()=>{predictions=null});
+document.addEventListener('gts:matches-updated',()=>setTimeout(decorate,50));
 setInterval(decorate,700);
 })();
