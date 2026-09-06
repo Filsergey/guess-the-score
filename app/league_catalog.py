@@ -7,11 +7,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.config import get_settings
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
 from app.services.competition_prepare import prepare_sstats_competition
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
+settings = get_settings()
 
 TOP_TOURNAMENTS = (
     {"league_id": 2, "name": "UEFA Champions League", "country": "Europe"},
@@ -46,6 +48,25 @@ def _catalog_seasons() -> list[dict]:
     now = datetime.now(timezone.utc)
     current = now.year if now.month >= 7 else now.year - 1
     return [{"year": year, "uid": None} for year in range(current, 2019, -1)]
+
+
+def _upstream_error_message(exc: Exception) -> str:
+    base = str(exc).strip() or type(exc).__name__
+    current = exc
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, httpx.HTTPStatusError):
+            status = current.response.status_code
+            reason = current.response.reason_phrase or "HTTP error"
+            if status == 429:
+                suffix = "лимит запросов SStats"
+                if not settings.sstats_api_key:
+                    suffix += "; SSTATS_API_KEY не настроен"
+                return f"SStats HTTP 429 Too Many Requests — {suffix}"
+            return f"SStats HTTP {status} {reason}"
+        current = current.__cause__ or current.__context__
+    return base
 
 
 async def _theme_league(league_id: int, user: User, db: AsyncSession) -> UserLeague:
@@ -147,7 +168,7 @@ async def sync_catalog_tournament(
         )
     except Exception as exc:
         await db.rollback()
-        message = str(exc).strip() or type(exc).__name__
+        message = _upstream_error_message(exc)
         if len(message) > 500:
             message = message[:497] + "..."
         raise HTTPException(
