@@ -5,12 +5,15 @@ function isCreateRequest(url){
 }
 function compactMessage(value,status){
  let s=String(value||'Неизвестная ошибка').replace(/\s+/g,' ').trim();
- s=s.replace(/^Не удалось синхронизировать турнир:\s*/i,'').trim();
+ s=s.replace(/^Турнир пока не готов:\s*/i,'').replace(/^Не удалось синхронизировать турнир:\s*/i,'').replace(/\s*Лига не создана\.?$/i,'').trim();
  if(status===429||/\b429\b|too many requests|слишком много запросов/i.test(s))return 'SStats: слишком много запросов (HTTP 429)';
  if(status===401||status===403||/\b401\b|\b403\b/i.test(s))return `SStats отказал в доступе${status?` (HTTP ${status})`:''}`;
  if(/timeout|timed out|слишком долго/i.test(s))return 'SStats слишком долго отвечает — запрос остановлен по таймауту';
- if(/не вернул матчи|матчи выбранного турнира/i.test(s))return s;
- if(s.length>145)s=s.slice(0,142)+'…';
+ if(/массовая загрузка игроков/i.test(s))return s.length>170?s.slice(0,167)+'…':s;
+ if(/массовая загрузка логотипов/i.test(s))return s.length>170?s.slice(0,167)+'…':s;
+ if(/не загрузились игроки|каталог игроков/i.test(s))return s.length>170?s.slice(0,167)+'…':s;
+ if(/не вернул матчи|матчи выбранного турнира|не удалось загрузить данные команд/i.test(s))return s.length>170?s.slice(0,167)+'…':s;
+ if(s.length>170)s=s.slice(0,167)+'…';
  return s;
 }
 function paintError(info){
