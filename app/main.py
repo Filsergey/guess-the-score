@@ -64,7 +64,7 @@ async def lifespan(_:FastAPI):
   for task in tasks:task.cancel()
   for task in tasks:
    with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.34.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.35.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
@@ -79,6 +79,14 @@ def _first_item(p):
  d=p.get('data') or p.get('response') or [];return (d[0] if d else {}) if isinstance(d,list) else (d if isinstance(d,dict) else {})
 def _v(d,n):return d.get(n[:1].lower()+n[1:],d.get(n))
 def _merge(a,b):r=dict(b);r.update({k:v for k,v in a.items() if v is not None});return r
+def _merge_statistics(fallback,fresh):
+ result={k:dict(v) for k,v in (fallback or {}).items() if isinstance(v,dict)}
+ for key,value in (fresh or {}).items():
+  if not isinstance(value,dict):continue
+  current=result.setdefault(key,{})
+  for side in ('home','away'):
+   if value.get(side) is not None:current[side]=value.get(side)
+ return result
 def serialize_sstats_details(d,g=None):
  g=g or {};names=['ShotsOnGoal','ShotsOffGoal','TotalShots','BlockedShots','ShotsInsideBox','ShotsOutsideBox','Fouls','CornerKicks','BallPossession','YellowCards','RedCards','GoalkeeperSaves','TotalPasses','PassesAccurate','Offsides','ExpectedGoals','CalculatedXg'];stats={n:{'home':_v(d,n+'Home'),'away':_v(d,n+'Away')} for n in names};return {'season_uid':_v(d,'SeasonUid'),'coverage':_v(d,'Coverage'),'venue':{'id':_v(d,'VenueId'),'name':_v(d,'VenueName'),'city':_v(d,'VenueCity'),'address':_v(d,'VenueAddress')},'coaches':{'home':_v(d,'HomeTeamCoachName'),'away':_v(d,'AwayTeamCoachName')},'score':{'ht':{'home':_v(d,'ScoreHomeHT'),'away':_v(d,'ScoreAwayHT')},'ft':{'home':_v(d,'ScoreHomeFT'),'away':_v(d,'ScoreAwayFT')},'et':{'home':_v(d,'ScoreHomeET'),'away':_v(d,'ScoreAwayET')},'penalties':{'home':_v(d,'ScoreHomePT'),'away':_v(d,'ScoreAwayPT')}},'odds':{'home':_v(d,'Winner1'),'draw':_v(d,'WinnerX'),'away':_v(d,'Winner2')},'model':{'rating':{'home':_v(d,'GlickoRatingHome') or _v(g,'RatingHome'),'away':_v(d,'GlickoRatingAway') or _v(g,'RatingAway')},'win_probability':{'home':_v(d,'GlickoWinProbHome') or _v(g,'WinProbHome'),'away':_v(d,'GlickoWinProbAway') or _v(g,'WinProbAway')},'xg':{'home':_v(d,'GlickoXgHome') or _v(g,'XgHome'),'away':_v(d,'GlickoXgAway') or _v(g,'XgAway')}},'statistics':stats}
 @app.get('/health')
@@ -137,12 +145,12 @@ async def match_rich_detail(match_id:int,live_only:bool=Query(default=False),db:
  if not live_only:
   try:gl=_first_item(await p.get_glicko(m.provider_id))
   except Exception as e:errors.append(f'glicko:{type(e).__name__}')
- d=_merge(qd,gd) if (qd or gd) else {};rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'player_stats':[],'lineups':{'home':{'formation':None,'coach':None,'starting':[],'bench':[]},'away':{'formation':None,'coach':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
+ d=_merge(qd,gd) if (qd or gd) else {};rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'player_stats':[],'statistics':{},'lineups':{'home':{'formation':None,'coach':None,'starting':[],'bench':[]},'away':{'formation':None,'coach':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
  if live_only:
   if not full:return {**base,'details_available':False,'details_source':'games/{id}:live','details_errors':errors,'details':None,'live_only':True}
   return {**base,'details_available':True,'details_source':'games/{id}:live','details_errors':errors,'details':rich,'live_only':True}
  if not d and not gl and not full:return {**base,'details_available':False,'details_source':None,'details_errors':errors,'details':None}
- details=serialize_sstats_details(d,gl);details.update(rich)
+ details=serialize_sstats_details(d,gl);query_stats=details.get('statistics') or {};details.update(rich);details['statistics']=_merge_statistics(query_stats,rich.get('statistics'))
  if rich.get('venue_full') and not details.get('venue',{}).get('name'):details['venue']=rich['venue_full']
  if not details.get('coaches',{}).get('home'):details['coaches']['home']=rich.get('lineups',{}).get('home',{}).get('coach')
  if not details.get('coaches',{}).get('away'):details['coaches']['away']=rich.get('lineups',{}).get('away',{}).get('coach')
