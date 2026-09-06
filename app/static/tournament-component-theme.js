@@ -4,7 +4,7 @@ s.textContent=`
 /* Shared light-theme component surfaces for domestic leagues */
 html[data-gts-tournament-theme='laliga'],html[data-gts-tournament-theme='epl'],html[data-gts-tournament-theme='seriea'],html[data-gts-tournament-theme='bundesliga']{--tc-surface:#fff;--tc-surface-2:#f5f5f5;--tc-border:#d9d9d9;--tc-text:#111;--tc-muted:#68717a}
 html[data-gts-tournament-theme='epl']{--tc-accent:#37003c;--tc-accent-2:#00ff87;--tc-surface-2:#f4f0f7;--tc-border:#ddd3e3}
-html[data-gts-tournament-theme='laliga']{--tc-accent:#ff4655;--tc-accent-2:#ff4655;--tc-surface-2:#f4f4f2;--tc-border:#dedede}
+html[data-gts-tournament-theme='laliga']{--tc-accent:#ff4655;--tc-accent-2:#a965ff;--tc-surface-2:#f4f4f2;--tc-border:#dedede}
 html[data-gts-tournament-theme='seriea']{--tc-accent:#0068b7;--tc-accent-2:#00a8e8;--tc-surface-2:#eef6fb;--tc-border:#cfe2ee}
 html[data-gts-tournament-theme='bundesliga']{--tc-accent:#d20515;--tc-accent-2:#d20515;--tc-surface-2:#f5f5f5;--tc-border:#dddddd}
 html[data-gts-tournament-theme='laliga'] .card,html[data-gts-tournament-theme='epl'] .card,html[data-gts-tournament-theme='seriea'] .card,html[data-gts-tournament-theme='bundesliga'] .card,
@@ -37,6 +37,37 @@ html[data-gts-tournament-theme='laliga'] .match-detail-score .big,html[data-gts-
 html[data-gts-tournament-theme='laliga'] .history-names,html[data-gts-tournament-theme='epl'] .history-names,html[data-gts-tournament-theme='seriea'] .history-names,html[data-gts-tournament-theme='bundesliga'] .history-names,
 html[data-gts-tournament-theme='laliga'] .history-score,html[data-gts-tournament-theme='epl'] .history-score,html[data-gts-tournament-theme='seriea'] .history-score,html[data-gts-tournament-theme='bundesliga'] .history-score{color:var(--tc-text)!important}
 html[data-gts-tournament-theme='laliga'] .sheet-round,html[data-gts-tournament-theme='epl'] .sheet-round,html[data-gts-tournament-theme='seriea'] .sheet-round,html[data-gts-tournament-theme='bundesliga'] .sheet-round{color:var(--tc-accent)!important}
+
+/* LaLiga: remove legacy dark-blue controls and use white / coral / purple. */
+html[data-gts-tournament-theme='laliga'] .tournament-title{color:#111!important;text-shadow:none!important}
+html[data-gts-tournament-theme='laliga'] .tournament .muted{color:#5f5f5f!important}
+html[data-gts-tournament-theme='laliga'] .date,html[data-gts-tournament-theme='laliga'] .round,html[data-gts-tournament-theme='laliga'] .center .prediction-state{color:#82768a!important}
+html[data-gts-tournament-theme='laliga'] .center .prediction-state.has{color:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .filter{background:#fff!important;color:#302735!important;border-color:#d7ccd9!important;box-shadow:none!important}
+html[data-gts-tournament-theme='laliga'] .filter.active{background:#ff4655!important;color:#fff!important;border-color:#ff4655!important}
+html[data-gts-tournament-theme='laliga'] .live-filter{color:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .live-filter.active{background:#a965ff!important;color:#fff!important;border-color:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .tp-field label{color:#a965ff!important;font-weight:750!important}
+html[data-gts-tournament-theme='laliga'] .tp-control,html[data-gts-tournament-theme='laliga'] .tp-menu,html[data-gts-tournament-theme='laliga'] .tp-item,html[data-gts-tournament-theme='laliga'] .tp-search{background:#fff!important;color:#111!important;border-color:#d9d0dc!important;box-shadow:none!important}
+html[data-gts-tournament-theme='laliga'] .tp-item{border-bottom-color:#eee7f0!important}
+html[data-gts-tournament-theme='laliga'] .tp-control:disabled{background:#f2f0f2!important;color:#777!important;opacity:1!important}
+html[data-gts-tournament-theme='laliga'] .tp-fallback{background:#f0ebf2!important;color:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .tp-meta{color:#777!important}
+html[data-gts-tournament-theme='laliga'] .tp-deadline{color:#666!important}
+html[data-gts-tournament-theme='laliga'] .tp-deadline.tp-lock{color:#ff4655!important}
+html[data-gts-tournament-theme='laliga'] #tpSave,html[data-gts-tournament-theme='laliga'] .sheet .save{background:#ff4655!important;color:#fff!important;border-color:#ff4655!important}
+html[data-gts-tournament-theme='laliga'] .ach-card,html[data-gts-tournament-theme='laliga'] .ach-goal,html[data-gts-tournament-theme='laliga'] .ach-badge,html[data-gts-tournament-theme='laliga'] .round-card{background:#fff!important;color:#111!important;border-color:#ddd4df!important;box-shadow:none!important;opacity:1!important}
+html[data-gts-tournament-theme='laliga'] .ach-goal.locked{background:#f8f6f8!important;opacity:1!important}
+html[data-gts-tournament-theme='laliga'] .ach-goal-icon,html[data-gts-tournament-theme='laliga'] .ach-avatar{background:#eee9f0!important;color:#6c5b73!important}
+html[data-gts-tournament-theme='laliga'] .ach-goal-title,html[data-gts-tournament-theme='laliga'] .ach-title,html[data-gts-tournament-theme='laliga'] .round-title,html[data-gts-tournament-theme='laliga'] .round-award b{color:#111!important}
+html[data-gts-tournament-theme='laliga'] .ach-goal-desc,html[data-gts-tournament-theme='laliga'] .ach-value,html[data-gts-tournament-theme='laliga'] .ach-empty,html[data-gts-tournament-theme='laliga'] .ach-head span,html[data-gts-tournament-theme='laliga'] .round-card-head,html[data-gts-tournament-theme='laliga'] .ach-progress-text{color:#716a74!important}
+html[data-gts-tournament-theme='laliga'] .ach-progress{background:#e8e2ea!important}
+html[data-gts-tournament-theme='laliga'] .ach-progress>span{background:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .ach-level-pill{background:#eee9f0!important;color:#716777!important}
+html[data-gts-tournament-theme='laliga'] .ach-level-pill.on{background:#f2e8ff!important;color:#7b31ce!important}
+html[data-gts-tournament-theme='laliga'] .ach-status.open{color:#a965ff!important}
+html[data-gts-tournament-theme='laliga'] .ach-status.locked{color:#8b838e!important}
+
 html[data-gts-tournament-theme='laliga'] .tournament button,html[data-gts-tournament-theme='laliga'] .tournament .pill{background:#ff4655!important;color:#fff!important;border-color:#ff4655!important}
 html[data-gts-tournament-theme='epl'] .tournament button,html[data-gts-tournament-theme='epl'] .tournament .pill{background:#37003c!important;color:#fff!important;border-color:#37003c!important}
 html[data-gts-tournament-theme='seriea'] .tournament button,html[data-gts-tournament-theme='seriea'] .tournament .pill{background:#0068b7!important;color:#fff!important;border-color:#0068b7!important}
