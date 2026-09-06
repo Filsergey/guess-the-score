@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -8,6 +10,26 @@ from app.models import Team, Tournament
 from app.providers.sstats import SStatsProvider
 
 router = APIRouter()
+
+TOURNAMENT_LOGO_DIR = Path(__file__).resolve().parent / 'static' / 'tournament-logos'
+LOCAL_TOURNAMENT_LOGO_IDS = {2, 39, 61, 71, 78, 88, 94, 135, 140, 235, 262}
+
+
+def _local_tournament_logo(provider_id: int | str | None):
+    try:
+        logo_id = int(provider_id)
+    except (TypeError, ValueError):
+        return None
+    if logo_id not in LOCAL_TOURNAMENT_LOGO_IDS:
+        return None
+    path = TOURNAMENT_LOGO_DIR / f'{logo_id}.svg'
+    if not path.is_file():
+        return None
+    return FileResponse(
+        path,
+        media_type='image/svg+xml',
+        headers={'Cache-Control': 'public, max-age=31536000, immutable'},
+    )
 
 
 async def _proxy(url: str) -> Response:
@@ -87,13 +109,8 @@ async def tournament_logo_by_db_id(tournament_id: int, db: AsyncSession = Depend
     if not tournament:
         raise HTTPException(404, 'Tournament not found')
 
-    url = tournament.logo_url if tournament.logo_url and tournament.logo_url.startswith(('http://', 'https://')) else None
-    if not url and tournament.provider == 'sstats' and tournament.provider_id:
-        from app.league_catalog import _sstats_tournament_logo_url
-        url = await _sstats_tournament_logo_url(int(tournament.provider_id))
-        if url:
-            tournament.logo_url = url
-            await db.commit()
-    if not url:
-        raise HTTPException(404, 'Tournament logo not loaded yet')
-    return await _proxy(url)
+    local = _local_tournament_logo(tournament.provider_id)
+    if local is not None:
+        return local
+
+    raise HTTPException(404, 'Local tournament logo not configured')
