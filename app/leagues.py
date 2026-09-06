@@ -60,7 +60,7 @@ async def create_league(body:LeagueCreate,user:User=Depends(get_current_user),db
  if body.tournament_id is not None:
   tournament=await db.get(Tournament,body.tournament_id)
   if tournament is None or tournament.provider!='sstats':raise HTTPException(422,'Tournament is not available in SStats')
-  exists=await db.scalar(select(func.count(Match.id)).where(Match.tournament_id=tournament.id,Match.provider=='sstats',Match.season==body.tournament_season))
+  exists=await db.scalar(select(func.count(Match.id)).where(Match.tournament_id==tournament.id,Match.provider=='sstats',Match.season==body.tournament_season))
   if not exists:raise HTTPException(422,'No SStats matches found for this tournament and season')
  now=datetime.now(timezone.utc);l=UserLeague(name=name,invite_code=await _unique_invite_code(db),owner_user_id=user.id,tournament_provider='sstats' if tournament else body.tournament_provider,tournament_season=body.tournament_season,tournament_id=tournament.id if tournament else None,is_private=body.is_private,include_oracle=body.include_oracle,created_at=now);db.add(l);await db.flush();db.add(LeagueMember(league_id=l.id,user_id=user.id,role='owner',joined_at=now));await db.commit();await db.refresh(l);return serialize_league(l,'owner',1)
 @router.post('/join')
