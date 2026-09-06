@@ -1,0 +1,15 @@
+(()=>{
+let seen=new Set(),ready=false,busy=false,leagueId=null,queue=[],showing=false;
+const css=document.createElement('style');css.textContent=`.gts-award-pop{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);z-index:1200;width:min(360px,calc(100vw - 28px));padding:14px;border-radius:18px;background:linear-gradient(145deg,#10283b,#142d24);border:1px solid #416b59;box-shadow:0 18px 60px rgba(0,0,0,.45);animation:gtsAwardIn .35s ease-out}.gts-award-pop button{all:unset;display:block;width:100%;cursor:pointer}.gts-award-kicker{font-size:9px;color:#88a69a;text-transform:uppercase;letter-spacing:.08em}.gts-award-main{display:flex;gap:11px;align-items:center;margin-top:5px}.gts-award-icon{font-size:34px}.gts-award-title{font-size:15px;font-weight:950}.gts-award-sub{font-size:10px;color:#a8bcb1;margin-top:3px}.gts-award-hint{font-size:8px;color:#789187;margin-top:8px;text-align:right}@keyframes gtsAwardIn{from{opacity:0;transform:translate(-50%,18px) scale(.96)}to{opacity:1;transform:translate(-50%,0) scale(1)}}`;document.head.appendChild(css);
+function key(a){return `${a.code}:${a.round}`}
+function mineAwards(d){return d?.mine?.round_awards||[]}
+async function fetchState(id){return window.GTS.api(`/api/leagues/${id}/achievements`)}
+async function baseline(){const id=window.GTS?.leagueId;if(!id)return;leagueId=id;try{const d=await fetchState(id);seen=new Set(mineAwards(d).map(key));ready=true}catch(e){console.warn('achievement baseline',e)}}
+function enqueue(items){queue.push(...items);showNext()}
+function showNext(){if(showing||!queue.length)return;showing=true;const a=queue.shift(),old=document.querySelector('.gts-award-pop');old?.remove();const el=document.createElement('div');el.className='gts-award-pop';el.innerHTML=`<button type="button"><div class="gts-award-kicker">Новое достижение</div><div class="gts-award-main"><div class="gts-award-icon">${a.icon||'🏅'}</div><div><div class="gts-award-title">${a.title||'Награда'}</div><div class="gts-award-sub">${a.round||''}${a.code==='round_winner'&&a.value!=null?` · ${a.value} очк.`:''}</div></div></div><div class="gts-award-hint">Нажми, чтобы открыть достижения</div></button>`;el.querySelector('button').onclick=()=>{el.remove();showing=false;window.openAchievements?.();showNext()};document.body.appendChild(el);setTimeout(()=>{if(el.isConnected)el.remove();showing=false;showNext()},5200)}
+async function check(){const id=window.GTS?.leagueId;if(!id||busy)return;if(!ready||leagueId!==id){await baseline();return}busy=true;try{const d=await fetchState(id),awards=mineAwards(d),fresh=awards.filter(a=>!seen.has(key(a)));awards.forEach(a=>seen.add(key(a)));if(fresh.length)enqueue(fresh)}catch(e){console.warn('achievement notify',e)}finally{busy=false}}
+document.addEventListener('gts:ready',()=>setTimeout(baseline,500));
+document.addEventListener('gts:league-change',()=>{ready=false;seen.clear();queue=[];leagueId=null;setTimeout(baseline,350)});
+document.addEventListener('gts:match-finished',()=>{setTimeout(check,2500);setTimeout(check,6500)});
+setTimeout(baseline,1200);
+})();
