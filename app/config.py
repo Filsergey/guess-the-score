@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     api_football_base_url: str = "https://v3.football.api-sports.io"
     admin_sync_token: str = ""
     telegram_bot_token: str = ""
+    telegram_login_client_id: str = ""
+    telegram_login_client_secret: str = ""
     jwt_secret: str = ""
     jwt_access_minutes: int = 60 * 24 * 7
     superadmin_telegram_id: int | None = None
