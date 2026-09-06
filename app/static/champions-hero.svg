@@ -1,26 +1,33 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 520" preserveAspectRatio="xMidYMid slice">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 600" preserveAspectRatio="xMidYMid slice">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#071426"/><stop offset="0.55" stop-color="#0b2e5b"/><stop offset="1" stop-color="#06111f"/></linearGradient>
-    <radialGradient id="glow" cx="50%" cy="36%" r="62%"><stop offset="0" stop-color="#1b64bc" stop-opacity=".8"/><stop offset=".55" stop-color="#0b2f5c" stop-opacity=".28"/><stop offset="1" stop-color="#06111f" stop-opacity="0"/></radialGradient>
-    <filter id="blur"><feGaussianBlur stdDeviation="6"/></filter>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#020914"/><stop offset=".44" stop-color="#08295b"/><stop offset="1" stop-color="#03101d"/></linearGradient>
+    <radialGradient id="glow" cx="50%" cy="34%" r="64%"><stop offset="0" stop-color="#1264c8" stop-opacity=".9"/><stop offset=".48" stop-color="#0a3b78" stop-opacity=".38"/><stop offset="1" stop-color="#020914" stop-opacity="0"/></radialGradient>
+    <linearGradient id="roof" x1="0" x2="1"><stop stop-color="#0a1e3c"/><stop offset=".5" stop-color="#0c3f86"/><stop offset="1" stop-color="#0a1e3c"/></linearGradient>
+    <filter id="blur"><feGaussianBlur stdDeviation="10"/></filter>
   </defs>
-  <rect width="1200" height="520" fill="url(#bg)"/>
-  <rect width="1200" height="520" fill="url(#glow)"/>
-  <path d="M0 355 Q600 210 1200 355" fill="none" stroke="#72b3ff" stroke-opacity=".16" stroke-width="3"/>
-  <path d="M0 375 Q600 245 1200 375" fill="none" stroke="#72b3ff" stroke-opacity=".10" stroke-width="2"/>
-  <g fill="#d9ecff" opacity=".85" filter="url(#blur)">
-    <circle cx="80" cy="310" r="8"/><circle cx="140" cy="286" r="7"/><circle cx="1060" cy="286" r="7"/><circle cx="1120" cy="310" r="8"/>
+  <rect width="1200" height="600" fill="url(#bg)"/>
+  <rect width="1200" height="600" fill="url(#glow)"/>
+  <path d="M-40 190 Q160 22 355 92 L475 20 M1240 190 Q1040 22 845 92 L725 20" fill="none" stroke="#1479ef" stroke-width="3" opacity=".55"/>
+  <path d="M0 325 Q600 145 1200 325 L1200 470 Q600 325 0 470Z" fill="url(#roof)" opacity=".62"/>
+  <path d="M0 348 Q600 188 1200 348" fill="none" stroke="#75baff" stroke-opacity=".3" stroke-width="2"/>
+  <path d="M0 374 Q600 230 1200 374" fill="none" stroke="#75baff" stroke-opacity=".17" stroke-width="2"/>
+  <g fill="#8fc6ff" opacity=".85" filter="url(#blur)">
+    <circle cx="40" cy="318" r="11"/><circle cx="95" cy="292" r="10"/><circle cx="150" cy="270" r="9"/><circle cx="205" cy="253" r="8"/>
+    <circle cx="995" cy="253" r="8"/><circle cx="1050" cy="270" r="9"/><circle cx="1105" cy="292" r="10"/><circle cx="1160" cy="318" r="11"/>
   </g>
-  <g fill="#fff" opacity=".95">
-    <circle cx="78" cy="310" r="2.3"/><circle cx="128" cy="292" r="1.8"/><circle cx="178" cy="278" r="1.8"/>
-    <circle cx="1022" cy="278" r="1.8"/><circle cx="1072" cy="292" r="1.8"/><circle cx="1122" cy="310" r="2.3"/>
+  <g fill="#fff">
+    <circle cx="40" cy="318" r="3"/><circle cx="95" cy="292" r="3"/><circle cx="150" cy="270" r="2.8"/><circle cx="205" cy="253" r="2.6"/>
+    <circle cx="995" cy="253" r="2.6"/><circle cx="1050" cy="270" r="2.8"/><circle cx="1105" cy="292" r="3"/><circle cx="1160" cy="318" r="3"/>
   </g>
-  <g transform="translate(600 190)" fill="#fff">
-    <path d="M0-83 21-33 73-43 37-3 72 39 20 29 0 80-20 29-72 39-37-3-73-43-21-33Z" fill-opacity=".97"/>
-    <circle r="37" fill="#0a2850"/>
-    <path d="M0-31 10-10 32-7 15 8 20 29 0 18-20 29-15 8-32-7-10-10Z"/>
+  <g transform="translate(600 194)" fill="#fff">
+    <g transform="scale(1.03)">
+      <path d="M0-78 22-38 66-50 52-6 88 19 45 34 48 78 10 56-20 91-35 49-80 55-56 15-91-8-49-24-59-68-15-55Z" fill="none" stroke="#fff" stroke-width="13" stroke-linejoin="round"/>
+      <circle r="34" fill="none" stroke="#fff" stroke-width="12"/>
+      <path d="M0-29 9-9 31-7 15 7 20 28 0 17-20 28-15 7-31-7-9-9Z"/>
+    </g>
   </g>
-  <text x="600" y="302" text-anchor="middle" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="32" font-weight="700" letter-spacing="4">CHAMPIONS LEAGUE</text>
-  <text x="600" y="337" text-anchor="middle" fill="#9fc4ef" font-family="Arial,Helvetica,sans-serif" font-size="18" letter-spacing="5">2026 / 27</text>
-  <path d="M210 420 Q600 335 990 420" fill="none" stroke="#2e7ed5" stroke-opacity=".24" stroke-width="2"/>
+  <text x="600" y="330" text-anchor="middle" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="18" font-weight="700" letter-spacing="3">UEFA</text>
+  <text x="600" y="370" text-anchor="middle" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="36" font-weight="700" letter-spacing="3">CHAMPIONS</text>
+  <text x="600" y="407" text-anchor="middle" fill="#fff" font-family="Arial,Helvetica,sans-serif" font-size="36" font-weight="700" letter-spacing="3">LEAGUE</text>
+  <text x="600" y="448" text-anchor="middle" fill="#91c3f7" font-family="Arial,Helvetica,sans-serif" font-size="18" letter-spacing="6">2026 / 27</text>
 </svg>
