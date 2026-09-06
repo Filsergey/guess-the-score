@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
+from app.providers.sstats import SStatsProvider
 from app.services.competition_readiness import prepare_sstats_competition_tolerant
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
@@ -89,12 +90,44 @@ def _theme_response(league: UserLeague) -> dict:
     }
 
 
+def _logo_value(row: dict):
+    logo = row.get("logoUrl") or row.get("LogoUrl") or row.get("logo") or row.get("Logo")
+    if isinstance(logo, dict):
+        logo = logo.get("url") or logo.get("Url")
+    return str(logo) if logo and str(logo).startswith(("http://", "https://")) else None
+
+
+async def _sstats_tournament_logo_url(provider_id: int) -> str | None:
+    try:
+        payload = await SStatsProvider().get_leagues()
+    except Exception:
+        return None
+    rows = payload.get("data") or payload.get("response") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_id = row.get("id") or row.get("Id") or row.get("leagueId") or row.get("LeagueId")
+        try:
+            if raw_id is None or int(raw_id) != int(provider_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        return _logo_value(row)
+    return None
+
+
 @router.get("/tournament-logo/{provider_id}")
 async def tournament_logo(provider_id: int):
-    """Same-origin proxy for tournament badges so Telegram WebView never loads the CDN directly."""
+    """Proxy the tournament badge discovered through SStats only."""
     if provider_id not in TOURNAMENT_LOGO_IDS:
         raise HTTPException(404, "Tournament logo not configured")
-    url = f"https://media.api-sports.io/football/leagues/{provider_id}.png"
+    url = await _sstats_tournament_logo_url(provider_id)
+    if not url:
+        raise HTTPException(404, "Tournament logo not loaded yet")
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             upstream = await client.get(url, headers={"User-Agent": "guess-the-score/1.0"})
@@ -127,7 +160,7 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
 @router.get("/catalog/logo-check")
 async def tournament_logo_check():
     return {
-        "source": "fixed-top-tournaments",
+        "source": "sstats",
         "count": len(TOP_TOURNAMENTS),
         "matches": [
             {
@@ -153,8 +186,9 @@ async def sync_catalog_tournament(
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
 
     # Wait for the bulk preload: matches, teams, crests and player rosters are all
-    # attempted before the user league is created. A tiny residual gap (roughly 10%,
-    # max two clubs) is allowed and repaired in the background.
+    # attempted before the user league is created. A tiny residual roster gap
+    # (roughly 10%, max two clubs) is allowed and repaired in the background.
+    # Missing crests are always non-blocking and are retried through SStats only.
     try:
         result = await prepare_sstats_competition_tolerant(
             db,
