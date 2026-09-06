@@ -10,7 +10,7 @@ from app.leagues import _eligible_final_matches, _membership, _oracle_score
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, User, UserLeague
 from app.predictions import match_is_final, prediction_points
 
-router = APIRouter(prefix="/api/leagues", tags=["match-results"])
+router = APIRouter(tags=["match-results"])
 
 
 def _rank(rows: list[dict]) -> list[dict]:
@@ -84,12 +84,7 @@ async def final_match_summary(league_id: int, match_id: int, user: User = Depend
         eligible = match.kickoff_at >= participant.registered_at
         prediction = await db.scalar(select(Prediction).where(Prediction.user_id == participant.id, Prediction.match_id == match_id)) if eligible else None
         pts = prediction_points(prediction, match) if prediction else None
-        item = {
-            "user_id": participant.id, "display_name": participant.display_name, "avatar_url": participant.avatar_url,
-            "is_oracle": False, "eligible": eligible, "has_prediction": prediction is not None,
-            "prediction": {"home_score": prediction.home_score, "away_score": prediction.away_score} if prediction else None,
-            "points": pts if pts is not None else 0,
-        }
+        item = {"user_id": participant.id, "display_name": participant.display_name, "avatar_url": participant.avatar_url, "is_oracle": False, "eligible": eligible, "has_prediction": prediction is not None, "prediction": {"home_score": prediction.home_score, "away_score": prediction.away_score} if prediction else None, "points": pts if pts is not None else 0}
         rows.append(item)
         if participant.id == user.id:
             mine = item
@@ -114,12 +109,4 @@ async def final_match_summary(league_id: int, match_id: int, user: User = Depend
     award = "no_prediction"
     if mine and mine["has_prediction"]:
         award = "exact" if mine["points"] == 3 else "outcome" if mine["points"] == 1 else "miss"
-    return {
-        "final": True, "match_id": match_id, "league_id": league_id,
-        "score": {"home": match.home_goals, "away": match.away_goals},
-        "mine": mine, "award": award,
-        "winners": [{"user_id": x["user_id"], "display_name": x["display_name"], "is_oracle": x["is_oracle"], "points": x["points"]} for x in winners],
-        "place_before": place_before, "place_after": place_after, "place_change": place_change,
-        "league_points_after": after_me["points"] if after_me else 0,
-        "response": rows,
-    }
+    return {"final": True, "match_id": match_id, "league_id": league_id, "score": {"home": match.home_goals, "away": match.away_goals}, "mine": mine, "award": award, "winners": [{"user_id": x["user_id"], "display_name": x["display_name"], "is_oracle": x["is_oracle"], "points": x["points"]} for x in winners], "place_before": place_before, "place_after": place_after, "place_change": place_change, "league_points_after": after_me["points"] if after_me else 0, "response": rows}
