@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,8 @@ from app.providers.sstats import SStatsProvider
 from app.services.sstats_sync import sync_sstats_competition
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
+
+TOURNAMENT_LOGO_IDS = {2, 39, 78, 135, 140}
 
 
 class CatalogSyncBody(BaseModel):
@@ -98,6 +101,26 @@ def _theme_response(league:UserLeague)->dict:
     return {"league_id":league.id,"icon":league.theme_icon,"background":league.theme_background,"tournament_background":league.theme_tournament_background}
 
 
+@router.get("/tournament-logo/{provider_id}")
+async def tournament_logo(provider_id: int):
+    """Same-origin proxy for tournament badges so Telegram WebView never loads the CDN directly."""
+    if provider_id not in TOURNAMENT_LOGO_IDS:
+        raise HTTPException(404, "Tournament logo not configured")
+    url = f"https://media.api-sports.io/football/leagues/{provider_id}.png"
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            upstream = await client.get(url, headers={"User-Agent": "guess-the-score/1.0"})
+            upstream.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(502, f"Tournament logo unavailable: {type(exc).__name__}") from exc
+    content_type = upstream.headers.get("content-type") or "image/png"
+    return Response(
+        content=upstream.content,
+        media_type=content_type.split(";", 1)[0],
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )
+
+
 @router.get("/catalog")
 async def tournament_catalog(user:User=Depends(get_current_user)):
     del user
@@ -112,7 +135,7 @@ async def tournament_catalog(user:User=Depends(get_current_user)):
         try:league_id=int(raw_id)
         except (TypeError,ValueError):continue
         name=str(_pick(row,"name","Name","leagueName","LeagueName",default=f"SStats #{league_id}"));seasons=_season_rows(row)
-        result.append({"league_id":league_id,"name":name,"country":_country_name(_pick(row,"country","Country","countryName","CountryName")),"logo_url":_pick(row,"logoUrl","LogoUrl","logo","Logo"),"seasons":seasons})
+        result.append({"league_id":league_id,"name":name,"country":_country_name(_pick(row,"country","Country","countryName","CountryName")),"logo_url":f"/api/leagues/tournament-logo/{league_id}" if league_id in TOURNAMENT_LOGO_IDS else None,"seasons":seasons})
     result.sort(key=_catalog_priority)
     return {"count":len(result),"response":result}
 
