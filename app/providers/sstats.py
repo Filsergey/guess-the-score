@@ -14,9 +14,9 @@ class SStatsProvider:
             return {}
         return {"Authorization": f"ApiKey {self.settings.sstats_api_key}"}
 
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _get(self, path: str, params: dict | None = None, timeout: float = 20.0) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(url, headers=self._headers(), params=params)
             response.raise_for_status()
             payload = response.json()
@@ -25,9 +25,9 @@ class SStatsProvider:
             raise RuntimeError(f"SStats error: {payload.get('message') or 'unknown error'}")
         return payload
 
-    async def _post(self, path: str, json: dict) -> dict:
+    async def _post(self, path: str, json: dict, timeout: float = 30.0) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(url, headers=self._headers(), json=json)
             response.raise_for_status()
             payload = response.json()
@@ -88,7 +88,6 @@ class SStatsProvider:
             out.setdefault("leagueName", cls._value(league, "name", "Name"))
             country = cls._value(league, "country", "Country") or {}
             if isinstance(country, dict): out.setdefault("countryName", cls._value(country, "name", "Name"))
-        # ApiSaGame names: result = score including extra time, FT = regulation score.
         out.setdefault("scoreHome", cls._value(row, "homeResult", "HomeResult"))
         out.setdefault("scoreAway", cls._value(row, "awayResult", "AwayResult"))
         out.setdefault("scoreHomeFT", cls._value(row, "homeFTResult", "HomeFTResult"))
@@ -151,10 +150,10 @@ class SStatsProvider:
 
     async def query_game_details(self,game_id:int)->dict:
         fields=["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
-        return await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0})
+        return await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0},timeout=2.0)
 
-    async def get_game(self,game_id:int)->dict:return await self._get(f"Games/{game_id}")
-    async def get_glicko(self,game_id:int)->dict:return await self._get(f"Games/glicko/{game_id}")
+    async def get_game(self,game_id:int)->dict:return await self._get(f"Games/{game_id}",timeout=2.0)
+    async def get_glicko(self,game_id:int)->dict:return await self._get(f"Games/glicko/{game_id}",timeout=2.0)
     async def get_standings(self,league_id:int|None=None,year:int|None=None,season_uid:str|None=None)->dict:
         params={}
         if season_uid:params["uid"]=season_uid
