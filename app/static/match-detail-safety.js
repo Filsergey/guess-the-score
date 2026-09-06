@@ -36,17 +36,21 @@ document.addEventListener('pointerdown',e=>{
   if(action)abortMatchLoad();
 },true);
 
-/* Never leave an endless-looking spinner on screen. The client request has its own
-   timeout, but this visual watchdog also works with a cached older match-detail script. */
+/* Hard watchdog: with either the current or a cached older match-detail script,
+   kill a details request after 6 seconds and leave the already-rendered score sheet usable. */
 const started=new WeakMap();
+const stopped=new WeakSet();
 function watchLoading(){
   const el=box.querySelector('[data-match-detail-id] .match-detail-loading');
   if(!el)return;
   if(!started.has(el)){started.set(el,Date.now());return}
-  if(Date.now()-started.get(el)<6000)return;
+  if(Date.now()-started.get(el)<6000||stopped.has(el))return;
+  stopped.add(el);
+  abortMatchLoad();
+  if(!modal.classList.contains('open'))return;
   el.className='match-detail-note';
-  el.textContent='Подробности SStats отвечают слишком долго. Основные данные матча уже доступны.';
+  el.textContent='Подробности SStats не ответили за 6 секунд. Основные данные матча доступны.';
 }
-setInterval(watchLoading,500);
+setInterval(watchLoading,300);
 window.closeMatchDetail=closeMatchSheet;
 })();
