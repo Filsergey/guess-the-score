@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
-from app.services.sstats_sync import prepare_sstats_competition
+from app.services.competition_prepare import prepare_sstats_competition
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
 
