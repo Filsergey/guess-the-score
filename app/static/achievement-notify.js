@@ -14,5 +14,5 @@ document.addEventListener('gts:league-change',()=>{ready=false;seen.clear();queu
 document.addEventListener('gts:match-finished',()=>{setTimeout(check,2500);setTimeout(check,6500)});
 setTimeout(baseline,1200);setTimeout(ensureTestLeague,1400);
 if(!document.querySelector('script[data-gts-popular-tournaments]')){const s=document.createElement('script');s.src='/static/popular-tournaments.js?v=3';s.dataset.gtsPopularTournaments='1';document.body.appendChild(s)}
-if(!document.querySelector('script[data-gts-tournament-branding]')){const s=document.createElement('script');s.src='/static/tournament-branding.js?v=1';s.dataset.gtsTournamentBranding='1';document.body.appendChild(s)}
+if(!document.querySelector('script[data-gts-tournament-branding]')){const s=document.createElement('script');s.src='/static/tournament-branding.js?v=2';s.dataset.gtsTournamentBranding='1';document.body.appendChild(s)}
 })();
