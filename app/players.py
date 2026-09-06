@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -14,7 +14,7 @@ from app.models import Player, Team, User
 from app.providers.sstats import SStatsProvider
 from app.tournament_predictions import _competition_team_models
 
-router=APIRouter(tags=["players"]);settings=get_settings();CATALOG_REFRESH_DAYS=7;DEFAULT_UCL_SEASON=2026
+router=APIRouter(tags=["players"]);settings=get_settings();DEFAULT_UCL_SEASON=2026
 POPULAR_TOKENS=("mbappe","мбаппе","kane","кейн","haaland","холанд","yamal","ямаль","vinicius","винисиус","dembele","дембеле","saka","сака","bellingham","беллингем","pedri","педри","wirtz","вирц","musiala","мусиала","lautaro","лаутаро","raphinha","рафинья")
 def _pick(data:dict,*names:str,default=None):
  for name in names:
@@ -95,11 +95,18 @@ async def ensure_sstats_player_catalog(db):
    await db.rollback()
    if len(errors)<10:errors.append({"team":team.name,"type":type(exc).__name__})
  return {"loaded":True,"scope":"ucl_main_stage","teams_processed":processed,"saved":saved,"errors":errors}
+def _serialize_player(p:Player)->dict:
+ return {"id":p.id,"provider":p.provider,"provider_id":p.provider_id,"name":p.name,"display_name":p.display_name or p.name,"team":p.team_name,"team_provider_id":p.team_provider_id,"position":p.position,"number":p.shirt_number,"nationality":p.nationality,"season":p.season,"photo":f"/api/players/{p.id}/photo" if (p.photo_data or p.photo_source_url) else None,"has_photo":bool(p.photo_data or p.photo_source_url)}
 @router.get("/api/players")
 async def list_players(q:str|None=Query(default=None,max_length=100),popular:bool=False,limit:int=Query(default=30,ge=1,le=100),user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  del user;rows=await _player_rows(db,q,popular,limit)
  if not rows:await ensure_sstats_player_catalog(db);rows=await _player_rows(db,q,popular,limit)
  return {"count":len(rows),"response":[{"id":r.id,"provider":r.provider,"provider_id":r.provider_id,"name":r.name,"display_name":r.display_name or r.name,"team":r.team_name,"position":r.position,"number":r.shirt_number,"nationality":r.nationality,"photo":f"/api/players/{r.id}/photo" if (r.has_photo_blob or r.photo_source_url) else None,"has_photo":bool(r.has_photo_blob or r.photo_source_url),"popular":r.is_popular} for r in rows]}
+@router.get("/api/players/provider/sstats/{provider_id}")
+async def provider_player_profile(provider_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ del user;p=await db.scalar(select(Player).where(Player.provider=="sstats",Player.provider_id==provider_id))
+ if not p:raise HTTPException(404,"Player not found")
+ return _serialize_player(p)
 @router.get("/api/players/catalog-status",include_in_schema=False)
 async def player_catalog_status(db:AsyncSession=Depends(get_db)):
  total=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats"))).scalar_one();active=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.is_active.is_(True)))).scalar_one();with_source=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_source_url.is_not(None)))).scalar_one();with_blob=(await db.execute(select(func.count(Player.id)).where(Player.provider=="sstats",Player.photo_data.is_not(None)))).scalar_one();return {"provider":"sstats","total":total,"active":active,"with_photo_source":with_source,"with_photo_blob":with_blob}
