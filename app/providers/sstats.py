@@ -43,6 +43,20 @@ class SStatsProvider:
                 return row[name]
         return None
 
+    @staticmethod
+    def _details_payload(payload: dict) -> dict:
+        """Keep one response shape for match-detail consumers.
+
+        SStats list/query responses are usually wrapped in data/response, while
+        /Games/{id} and /Games/glicko/{id} can return the object directly. Older
+        consumers in the app expect data/response, so wrap direct objects here.
+        """
+        if not isinstance(payload, dict):
+            return {"data": []}
+        if "data" in payload or "response" in payload:
+            return payload
+        return {"data": payload}
+
     @classmethod
     def _season_from_league_row(cls, row: dict, year: int) -> dict | None:
         containers = []
@@ -149,11 +163,16 @@ class SStatsProvider:
         payload,_=await self.competition_games(league_id,year);return payload
 
     async def query_game_details(self,game_id:int)->dict:
-        fields=["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","TotalPassesAway","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
-        return await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0},timeout=2.0)
+        fields=["Id","SeasonUid","Date","LeagueId","LeagueName","Year","Status","HomeTeamId","HomeTeamName","AwayTeamId","AwayTeamName","HomeTeamCoachName","AwayTeamCoachName","ScoreHome","ScoreAway","ScoreHomeFT","ScoreAwayFT","ScoreHomeHT","ScoreAwayHT","ScoreHomeET","ScoreAwayET","ScoreHomePT","ScoreAwayPT","VenueId","VenueName","VenueAddress","VenueCity","Winner1","WinnerX","Winner2","OddsXgHome","OddsXgAway","GlickoRatingHome","GlickoRatingAway","GlickoWinProbHome","GlickoWinProbAway","GlickoXgHome","GlickoXgAway","ShotsOnGoalHome","ShotsOnGoalAway","ShotsOffGoalHome","ShotsOffGoalAway","TotalShotsHome","TotalShotsAway","BlockedShotsHome","BlockedShotsAway","ShotsInsideBoxHome","ShotsInsideBoxAway","ShotsOutsideBoxHome","ShotsOutsideBoxAway","FoulsHome","FoulsAway","CornerKicksHome","CornerKicksAway","BallPossessionHome","BallPossessionAway","YellowCardsHome","YellowCardsAway","RedCardsHome","RedCardsAway","GoalkeeperSavesHome","GoalkeeperSavesAway","TotalPassesHome","PassesAccurateHome","PassesAccurateAway","OffsidesHome","OffsidesAway","ExpectedGoalsHome","ExpectedGoalsAway","CalculatedXgHome","CalculatedXgAway","CoverageSeasonPlayers","CoverageSeasonEvents","CoverageSeasonLineups","CoverageSeasonStatisticsFixtures","CoverageSeasonStatisticsPlayers","CoverageSeasonStandings","CoverageSeasonOdds"]
+        payload=await self._post("Games/query",{"Condition":f"Id = {game_id}","Fields":fields,"Limit":1,"Format":"json","Timezone":0},timeout=2.0)
+        return self._details_payload(payload)
 
-    async def get_game(self,game_id:int)->dict:return await self._get(f"Games/{game_id}",timeout=2.0)
-    async def get_glicko(self,game_id:int)->dict:return await self._get(f"Games/glicko/{game_id}",timeout=2.0)
+    async def get_game(self,game_id:int)->dict:
+        return self._details_payload(await self._get(f"Games/{game_id}",timeout=2.0))
+
+    async def get_glicko(self,game_id:int)->dict:
+        return self._details_payload(await self._get(f"Games/glicko/{game_id}",timeout=2.0))
+
     async def get_standings(self,league_id:int|None=None,year:int|None=None,season_uid:str|None=None)->dict:
         params={}
         if season_uid:params["uid"]=season_uid
