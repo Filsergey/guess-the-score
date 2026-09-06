@@ -49,7 +49,7 @@ async def _main_stage_matches(db,provider,season,tournament_id:int|None=None):
 async def _deadline(db,provider,season,tournament_id:int|None=None):
  matches=await _main_stage_matches(db,provider,season,tournament_id)
  if not matches:raise HTTPException(404,'Tournament matches not found')
- if tournament_id is None and provider=='sstats' and season==2026:
+ if provider=='sstats' and season==2026:
   md1=[m.kickoff_at for m in matches if (classify_ucl_round(season,m.kickoff_at) or {}).get('stage')=='league_phase' and (classify_ucl_round(season,m.kickoff_at) or {}).get('matchday')==1]
   if md1:return min(md1)
  return matches[0].kickoff_at
