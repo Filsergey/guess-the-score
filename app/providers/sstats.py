@@ -16,8 +16,13 @@ class SStatsProvider:
 
     async def _get(self, path: str, params: dict | None = None, timeout: float = 20.0) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+        headers = self._headers()
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(url, headers=self._headers(), params=params)
+            response = await client.get(url, headers=headers, params=params)
+            # SStats also supports public access. If a configured key has expired or
+            # lost permissions, retry once without it instead of breaking the app.
+            if response.status_code in {401, 403} and headers:
+                response = await client.get(url, headers={}, params=params)
             response.raise_for_status()
             payload = response.json()
         status = str(payload.get("status", "")).lower()
@@ -27,8 +32,11 @@ class SStatsProvider:
 
     async def _post(self, path: str, json: dict, timeout: float = 30.0) -> dict:
         url = f"{self.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+        headers = self._headers()
         async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url, headers=self._headers(), json=json)
+            response = await client.post(url, headers=headers, json=json)
+            if response.status_code in {401, 403} and headers:
+                response = await client.post(url, headers={}, json=json)
             response.raise_for_status()
             payload = response.json()
         status = str(payload.get("status", "")).lower()
@@ -124,10 +132,18 @@ class SStatsProvider:
         return out
 
     async def get_leagues(self) -> dict:
-        return await self._get("Leagues")
+        # Catalog is no longer required by the UI or sync path. Keep this method
+        # for diagnostics/season UID optimization, but fail fast if SStats has it down.
+        return await self._get("Leagues", timeout=3.0)
 
     async def resolve_season_uid(self, league_id: int, year: int) -> dict | None:
-        payload = await self.get_leagues(); rows = payload.get("data") or payload.get("response") or []
+        try:
+            payload = await self.get_leagues()
+        except Exception:
+            # Games/list supports LeagueId + Year directly, so the season UID is an
+            # optional optimization and must never block league creation.
+            return None
+        rows = payload.get("data") or payload.get("response") or []
         if isinstance(rows, dict): rows = [rows]
         if not isinstance(rows, list): return None
         for row in rows:
