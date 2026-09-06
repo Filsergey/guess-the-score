@@ -1,0 +1,13 @@
+(()=>{
+let original=null,installTimer=null,visibilityBusy=false;
+function clone(v){return v==null?v:JSON.parse(JSON.stringify(v))}
+function decoratePayload(payload){const out=clone(payload);const raw=out?.details?.live_raw;if(raw){const elapsed=Number(raw.elapsed),extra=Number(raw.extra_minutes);if(Number.isFinite(elapsed)&&Number.isFinite(extra)&&extra>0)raw.elapsed=`${elapsed}+${extra}`}return out}
+function install(){if(!window.GTS?.api||window.GTS.api.__gtsLiveUx)return false;original=window.GTS.api.bind(window.GTS);const wrapped=async function(url,options){const value=await original(url,options);if(typeof url==='string'&&/^\/api\/matches\/\d+\/details(?:\?|$)/.test(url))return decoratePayload(value);return value};wrapped.__gtsLiveUx=true;wrapped.original=original;window.GTS.api=wrapped;return true}
+if(!install()){installTimer=setInterval(()=>{if(install()){clearInterval(installTimer);installTimer=null}},25);setTimeout(()=>{if(installTimer)clearInterval(installTimer)},5000)}
+function activeMatchId(){const el=document.querySelector('[data-match-detail-id]');const raw=el?.getAttribute('data-match-detail-id');const id=Number(raw);return Number.isFinite(id)&&id>0?id:null}
+function fixSubstitutions(root=document){root.querySelectorAll('.event').forEach(row=>{const sub=row.querySelector('.event-sub'),main=row.querySelector('.event-main');if(!sub||!main)return;const text=(sub.textContent||'').trim();const m=text.match(/^Замена\s*·\s*вместо\s+(.+)$/i);if(!m)return;const incoming=(main.textContent||'').trim(),outgoing=m[1].trim();if(incoming&&outgoing)sub.textContent=`Замена · ${incoming} ↔ ${outgoing}`})}
+const observer=new MutationObserver(ms=>{for(const m of ms){for(const node of m.addedNodes){if(node.nodeType!==1)continue;if(node.matches?.('[data-match-detail-id],.event')||node.querySelector?.('[data-match-detail-id],.event'))fixSubstitutions(node)}}});
+observer.observe(document.documentElement,{childList:true,subtree:true});
+document.addEventListener('visibilitychange',async()=>{if(document.hidden||visibilityBusy)return;const id=activeMatchId();if(!id||typeof window.openMatchDetail!=='function')return;const match=window.GTS?.match?.(id);if(match?.status_group!=='live')return;visibilityBusy=true;const sheet=document.querySelector('#sheetContent')?.closest('.sheet'),scroll=sheet?.scrollTop||0;try{await window.openMatchDetail(id);if(sheet)requestAnimationFrame(()=>{sheet.scrollTop=scroll})}catch(e){console.warn('visible live refresh',e)}finally{visibilityBusy=false}});
+document.addEventListener('gts:goal',()=>requestAnimationFrame(()=>fixSubstitutions(document)));
+})();
