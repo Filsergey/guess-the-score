@@ -4,7 +4,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models import Team
+from app.models import Team, Tournament
 from app.providers.sstats import SStatsProvider
 
 router = APIRouter()
@@ -24,7 +24,7 @@ async def _proxy(url: str) -> Response:
         if r.status_code != 200 or not r.content or (
             ctype and not ctype.startswith('image/') and 'svg' not in ctype
         ):
-            raise HTTPException(404, 'Team logo not found')
+            raise HTTPException(404, 'Logo not found')
         return Response(
             content=r.content,
             media_type=ctype or 'image/png',
@@ -33,7 +33,7 @@ async def _proxy(url: str) -> Response:
     except HTTPException:
         raise
     except Exception:
-        raise HTTPException(502, 'Team logo unavailable')
+        raise HTTPException(502, 'Logo unavailable')
 
 
 async def _restore_sstats_logo(team: Team, db: AsyncSession) -> str | None:
@@ -79,3 +79,14 @@ async def team_logo_by_db_id(team_id: int, db: AsyncSession = Depends(get_db)):
         if fresh and fresh != url:
             return await _proxy(fresh)
         raise
+
+
+@router.get('/api/tournament-logo/db/{tournament_id}', include_in_schema=False)
+async def tournament_logo_by_db_id(tournament_id: int, db: AsyncSession = Depends(get_db)):
+    tournament = await db.get(Tournament, tournament_id)
+    if not tournament:
+        raise HTTPException(404, 'Tournament not found')
+    url = tournament.logo_url if tournament.logo_url and tournament.logo_url.startswith(('http://', 'https://')) else None
+    if not url:
+        raise HTTPException(404, 'Tournament logo not loaded yet')
+    return await _proxy(url)
