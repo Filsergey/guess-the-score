@@ -2,19 +2,19 @@
 let editLeagueSettings=null;
 const style=document.createElement('style');
 style.textContent=`
-#leaguesView .league-card.has-delete{padding-right:34px;padding-bottom:48px;min-height:88px}
+#leaguesView .league-card.has-delete{padding-right:20px;padding-bottom:38px;min-height:76px}
 #leaguesView .league-card.has-delete .league-main{min-width:0;width:100%}
-#leaguesView .league-card.has-delete .league-name-row{padding-right:2px}
-#leaguesView .league-card.has-delete .league-meta{padding-right:112px}
-#leaguesView .league-edit{position:absolute;right:72px;bottom:9px;height:30px;padding:0 10px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:#9fd3ff;background:rgba(25,88,137,.18);border:1px solid rgba(63,143,203,.34);font-size:9px;font-weight:850;z-index:3;white-space:nowrap}
-#leaguesView .league-edit:active{background:rgba(35,111,171,.28)}
-#leaguesView .league-card.has-delete .league-delete{right:32px;top:auto;bottom:9px;transform:none;width:31px;height:30px}
-#leaguesView .league-card.has-delete .league-arrow{right:11px;top:50%;transform:translateY(-50%)}
+#leaguesView .league-card.has-delete .league-name-row{padding-right:0}
+#leaguesView .league-card.has-delete .league-meta{padding-right:0}
+#leaguesView .league-card .league-arrow{display:none!important}
+#leaguesView .league-edit{position:absolute;right:54px;bottom:7px;height:25px;padding:0 8px;border-radius:9px;display:flex;align-items:center;justify-content:center;color:#9fd3ff;background:rgba(25,88,137,.16);border:1px solid rgba(63,143,203,.32);font-size:8px;font-weight:850;z-index:3;white-space:nowrap}
+#leaguesView .league-edit:active{background:rgba(35,111,171,.26)}
+#leaguesView .league-card.has-delete .league-delete{right:14px;top:auto;bottom:7px;transform:none;width:29px;height:25px;border-radius:9px;font-size:12px}
+#leaguesView .league-card.selected{border-color:#24a4ff!important;box-shadow:inset 3px 0 #24a4ff,0 0 0 1px rgba(42,157,255,.18),0 0 14px rgba(24,145,255,.30)!important}
 @media(max-width:430px){
-  #leaguesView .league-card.has-delete{padding-right:32px;padding-bottom:47px}
-  #leaguesView .league-card.has-delete .league-meta{padding-right:106px}
-  #leaguesView .league-edit{right:68px;bottom:9px;padding:0 8px;font-size:8.5px;height:29px}
-  #leaguesView .league-card.has-delete .league-delete{right:30px;bottom:9px;height:29px}
+  #leaguesView .league-card.has-delete{padding-right:18px;padding-bottom:37px;min-height:74px}
+  #leaguesView .league-edit{right:52px;bottom:6px;height:24px;padding:0 7px;font-size:7.8px}
+  #leaguesView .league-card.has-delete .league-delete{right:13px;bottom:6px;height:24px;width:28px}
 }
 `;
 document.head.appendChild(style);
