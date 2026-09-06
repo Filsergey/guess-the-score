@@ -1,0 +1,24 @@
+{
+  "id": "/",
+  "name": "Угадай счёт",
+  "short_name": "Угадай счёт",
+  "description": "Футбольные прогнозы, лиги друзей и результаты матчей",
+  "lang": "ru",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "categories": ["sports", "games", "social"],
+  "icons": [
+    {
+      "src": "/static/pwa-icon.svg?v=1",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
