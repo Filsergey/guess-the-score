@@ -22,7 +22,7 @@ const getLeague=id=>leagues().find(x=>Number(x.id)===Number(id));
 const canManage=l=>l?.member_role==='owner'||window.GTS?.me?.role==='superadmin';
 function tournamentFor(l){const ts=window.getTournaments?.()||[];return ts.find(t=>Number(t.id)===Number(l?.tournament_id)&&Number(t.season)===Number(l?.tournament_season))||ts.find(t=>Number(t.id)===Number(l?.tournament_id))||null}
 function cardLeagueId(card,index){const direct=Number(card.dataset.leagueId||0);if(direct)return direct;const l=leagues()[index];return Number(l?.id||0)}
-function selectLeague(id){id=Number(id);if(!id)return;window.selectLeagueOnly?.(id)??window.chooseLeague?.(id)}
+function selectLeague(id){id=Number(id);if(!id)return;if(typeof window.selectLeagueOnly==='function')window.selectLeagueOnly(id);else window.chooseLeague?.(id)}
 function fixLegacyTournamentLogo(img,l){if(!img||!String(img.src||'').includes('media.api-sports.io'))return;const t=tournamentFor(l);if(t?.logo_url)img.src=t.logo_url}
 function decorate(){
  const cards=[...document.querySelectorAll('#leaguesView .league-card')];
