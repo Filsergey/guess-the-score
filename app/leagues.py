@@ -150,3 +150,7 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
     correct=outcomes+exacts;accuracy=round(correct/submitted*100,1) if submitted else 0.0;missed=max(0,len(items)-submitted)
     participant_data={'user_id':None,'display_name':'Оракул','avatar_url':None,'is_oracle':True} if is_oracle else {'user_id':target.id,'display_name':target.display_name,'avatar_url':target.avatar_url,'is_oracle':False,'registered_at':target.registered_at}
     return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items),'missed':missed},'count':len(items),'response':items}
+
+# Mounted after helper definitions to avoid circular import during module initialization.
+from app.match_results import router as match_results_router
+router.include_router(match_results_router)
