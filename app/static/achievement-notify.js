@@ -8,9 +8,10 @@ async function baseline(){const id=window.GTS?.leagueId;if(!id)return;leagueId=i
 function enqueue(items){queue.push(...items);showNext()}
 function showNext(){if(showing||!queue.length)return;showing=true;const a=queue.shift(),old=document.querySelector('.gts-award-pop');old?.remove();const el=document.createElement('div');el.className='gts-award-pop';el.innerHTML=`<button type="button"><div class="gts-award-kicker">Новое достижение</div><div class="gts-award-main"><div class="gts-award-icon">${a.icon||'🏅'}</div><div><div class="gts-award-title">${a.title||'Награда'}</div><div class="gts-award-sub">${a.round||''}${a.code==='round_winner'&&a.value!=null?` · ${a.value} очк.`:''}</div></div></div><div class="gts-award-hint">Нажми, чтобы открыть достижения</div></button>`;el.querySelector('button').onclick=()=>{el.remove();showing=false;window.openAchievements?.();showNext()};document.body.appendChild(el);setTimeout(()=>{if(el.isConnected)el.remove();showing=false;showNext()},5200)}
 async function check(){const id=window.GTS?.leagueId;if(!id||busy)return;if(!ready||leagueId!==id){await baseline();return}busy=true;try{const d=await fetchState(id),awards=mineAwards(d),fresh=awards.filter(a=>!seen.has(key(a)));awards.forEach(a=>seen.add(key(a)));if(fresh.length)enqueue(fresh)}catch(e){console.warn('achievement notify',e)}finally{busy=false}}
-document.addEventListener('gts:ready',()=>setTimeout(baseline,500));
+async function ensureTestLeague(){if(window.GTS?.me?.role!=='superadmin'||!window.GTS?.api)return;try{await window.GTS.api('/api/leagues/test-fixture',{method:'POST'});await window.loadLeagues?.();window.renderLeagues?.()}catch(e){console.warn('test fixture',e)}}
+document.addEventListener('gts:ready',()=>{setTimeout(baseline,500);setTimeout(ensureTestLeague,700)});
 document.addEventListener('gts:league-change',()=>{ready=false;seen.clear();queue=[];leagueId=null;setTimeout(baseline,350)});
 document.addEventListener('gts:match-finished',()=>{setTimeout(check,2500);setTimeout(check,6500)});
-setTimeout(baseline,1200);
+setTimeout(baseline,1200);setTimeout(ensureTestLeague,1400);
 if(!document.querySelector('script[data-gts-popular-tournaments]')){const s=document.createElement('script');s.src='/static/popular-tournaments.js?v=3';s.dataset.gtsPopularTournaments='1';document.body.appendChild(s)}
 })();
