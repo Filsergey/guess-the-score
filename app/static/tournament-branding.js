@@ -1,17 +1,17 @@
 (()=>{
 const LOGOS={
-  2:'https://media.api-sports.io/football/leagues/2.png',
-  39:'https://media.api-sports.io/football/leagues/39.png',
-  140:'https://media.api-sports.io/football/leagues/140.png',
-  135:'https://media.api-sports.io/football/leagues/135.png',
-  78:'https://media.api-sports.io/football/leagues/78.png'
+  2:'/api/leagues/tournament-logo/2',
+  39:'/api/leagues/tournament-logo/39',
+  140:'/api/leagues/tournament-logo/140',
+  135:'/api/leagues/tournament-logo/135',
+  78:'/api/leagues/tournament-logo/78'
 };
 function tournamentForLeague(league){
   const tournaments=window.getTournaments?.()||[];
   if(!league)return null;
   return tournaments.find(t=>Number(t.id)===Number(league.tournament_id)&&Number(t.season)===Number(league.tournament_season))||tournaments.find(t=>Number(t.id)===Number(league.tournament_id))||null;
 }
-function img(logo){return `<img src="${logo}" alt="" loading="eager" referrerpolicy="no-referrer">`}
+function img(logo){return `<img src="${logo}" alt="" loading="eager">`}
 function applyHeader(){
   const icon=document.querySelector('#leagueSelect .selector-icon');
   if(!icon)return;
