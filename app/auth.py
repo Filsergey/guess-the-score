@@ -32,6 +32,10 @@ class TelegramLoginRequest(BaseModel):
     init_data: str
 
 
+class TelegramIdTokenRequest(BaseModel):
+    id_token: str = Field(min_length=20, max_length=10000)
+
+
 class PushKeys(BaseModel):
     p256dh: str = Field(min_length=20, max_length=500)
     auth: str = Field(min_length=8, max_length=300)
@@ -132,11 +136,18 @@ async def _upsert_telegram_user(
     return user
 
 
-def _web_login_config() -> tuple[str, str]:
+def _web_client_id() -> str:
     client_id = (settings.telegram_login_client_id or "").strip()
-    client_secret = (settings.telegram_login_client_secret or "").strip()
-    if not client_id or not client_secret:
+    if not client_id:
         raise HTTPException(status_code=503, detail="Вход через Telegram в браузере ещё не настроен")
+    return client_id
+
+
+def _web_login_config() -> tuple[str, str]:
+    client_id = _web_client_id()
+    client_secret = (settings.telegram_login_client_secret or "").strip()
+    if not client_secret:
+        raise HTTPException(status_code=503, detail="Резервный OIDC-вход через Telegram не настроен")
     if not (settings.jwt_secret or "").strip():
         raise HTTPException(status_code=503, detail="JWT_SECRET не настроен")
     return client_id, client_secret
@@ -204,6 +215,19 @@ async def _verify_telegram_id_token(id_token: str, client_id: str) -> dict:
         raise HTTPException(status_code=401, detail="Не удалось подтвердить вход через Telegram") from exc
 
 
+async def _user_from_id_token(id_token: str, db: AsyncSession) -> User:
+    client_id = _web_client_id()
+    claims = await _verify_telegram_id_token(id_token, client_id)
+    try:
+        telegram_id = int(claims.get("id"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Telegram не вернул ID пользователя") from exc
+    username = str(claims.get("preferred_username") or "").strip() or None
+    display_name = str(claims.get("name") or username or f"User {telegram_id}").strip()
+    avatar_url = str(claims.get("picture") or "").strip() or None
+    return await _upsert_telegram_user(db, telegram_id, username, display_name, avatar_url)
+
+
 def _push_payload(subscription: PushSubscription) -> dict:
     return {
         "endpoint": subscription.endpoint,
@@ -259,12 +283,28 @@ async def telegram_login(body: TelegramLoginRequest, db: AsyncSession = Depends(
 
 @router.get("/web/status")
 async def telegram_web_status() -> dict:
-    configured = bool(
-        (settings.telegram_login_client_id or "").strip()
-        and (settings.telegram_login_client_secret or "").strip()
-        and (settings.jwt_secret or "").strip()
-    )
-    return {"configured": configured, "login_url": "/api/auth/web/start"}
+    client_id = (settings.telegram_login_client_id or "").strip()
+    has_secret = bool((settings.telegram_login_client_secret or "").strip())
+    return {
+        "configured": bool(client_id),
+        "client_id": client_id or None,
+        "popup": bool(client_id),
+        "fallback_login_url": "/api/auth/web/start" if client_id and has_secret else None,
+    }
+
+
+@router.post("/web/id-token")
+async def telegram_web_id_token(body: TelegramIdTokenRequest, db: AsyncSession = Depends(get_db)) -> dict:
+    user = await _user_from_id_token(body.id_token, db)
+    try:
+        access_token = create_access_token(user.id, user.role)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": serialize_user(user),
+    }
 
 
 @router.get("/web/start")
@@ -344,15 +384,7 @@ async def telegram_web_callback(
     id_token = str(token_payload.get("id_token") or "")
     if not id_token:
         raise HTTPException(status_code=502, detail="Telegram не вернул данные пользователя")
-    claims = await _verify_telegram_id_token(id_token, client_id)
-    try:
-        telegram_id = int(claims.get("id"))
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=401, detail="Telegram не вернул ID пользователя") from exc
-    username = str(claims.get("preferred_username") or "").strip() or None
-    display_name = str(claims.get("name") or username or f"User {telegram_id}").strip()
-    avatar_url = str(claims.get("picture") or "").strip() or None
-    user = await _upsert_telegram_user(db, telegram_id, username, display_name, avatar_url)
+    user = await _user_from_id_token(id_token, db)
     access_token = create_access_token(user.id, user.role)
     token_json = json.dumps(access_token)
     html = f"""<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Угадай счёт</title></head><body style='margin:0;background:#07111f;color:white;font-family:system-ui;display:grid;place-items:center;min-height:100vh'><div>Вход выполнен…</div><script>localStorage.setItem('access_token',{token_json});location.replace('/?source=pwa');</script></body></html>"""
