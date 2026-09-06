@@ -174,8 +174,14 @@ async def league_invite_link(
     league = await db.get(UserLeague, league_id)
     if league is None:
         raise HTTPException(status_code=404, detail="Лига не найдена")
-    if league.owner_user_id != user.id and user.role != "superadmin":
-        raise HTTPException(status_code=403, detail="Ссылкой приглашения управляет владелец лиги")
+    member = await db.scalar(
+        select(LeagueMember).where(
+            LeagueMember.league_id == league.id,
+            LeagueMember.user_id == user.id,
+        )
+    )
+    if member is None and user.role != "superadmin":
+        raise HTTPException(status_code=403, detail="Приглашение доступно только участникам лиги")
     username = await _telegram_bot_username()
     start_param = f"league_{league.invite_code}"
     return {
