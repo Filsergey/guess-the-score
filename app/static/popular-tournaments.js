@@ -4,8 +4,6 @@ const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLo
 const bad=n=>/(women|woman|femin|u19|u20|u21|u23|youth|junior|reserve|qualification|qualifier|qualifying|playoff|play off)/i.test(n);
 const CATALOG_CACHE_KEY='gts-create-league-catalog-v1',CATALOG_CACHE_TTL=30*60*1000;
 
-// Только эти турниры доступны при создании пользовательской лиги.
-// Порядок здесь = порядок в выпадающем списке.
 const SPECS=[
  {label:'Лига чемпионов',aliases:['uefa champions league','champions league'],countries:[]},
  {label:'АПЛ',aliases:['premier league','english premier league'],countries:['england','united kingdom','great britain']},
@@ -128,4 +126,5 @@ function installCreateProgress(){
 }
 
 setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly;if(!installCreateProgress()){const t=setInterval(()=>{if(installCreateProgress())clearInterval(t)},50);setTimeout(()=>clearInterval(t),5000)}},0);
+if(!document.querySelector('script[data-gts-create-league-error]')){const s=document.createElement('script');s.src='/static/create-league-error.js?v=2';s.dataset.gtsCreateLeagueError='1';document.body.appendChild(s)}
 })();
