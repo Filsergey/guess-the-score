@@ -8,7 +8,7 @@ from app.auth import get_current_user
 from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
 from app.localization import team_name_ru
-from app.models import Match, Player, Team, TournamentPrediction, User
+from app.models import Match, Player, Team, Tournament, TournamentPrediction, User
 from app.providers.uefa import UEFAProvider
 
 router=APIRouter(prefix='/api/tournament-predictions',tags=['tournament-predictions'])
@@ -39,15 +39,17 @@ def _norm_code(value:str|None)->str:
  aliases={'LAS':'LASK'}
  return aliases.get(code,code)
 
-async def _main_stage_matches(db,provider,season):
- matches=(await db.execute(select(Match).where(Match.provider==provider,Match.season==season).order_by(Match.kickoff_at))).scalars().all()
- if provider=='sstats' and season==2026:return [m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None]
+async def _main_stage_matches(db,provider,season,tournament_id:int|None=None):
+ stmt=select(Match).where(Match.provider==provider,Match.season==season)
+ if tournament_id is not None:stmt=stmt.where(Match.tournament_id==tournament_id)
+ matches=(await db.execute(stmt.order_by(Match.kickoff_at))).scalars().all()
+ if tournament_id is None and provider=='sstats' and season==2026:return [m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None]
  return matches
 
-async def _deadline(db,provider,season):
- matches=await _main_stage_matches(db,provider,season)
+async def _deadline(db,provider,season,tournament_id:int|None=None):
+ matches=await _main_stage_matches(db,provider,season,tournament_id)
  if not matches:raise HTTPException(404,'Tournament matches not found')
- if provider=='sstats' and season==2026:
+ if tournament_id is None and provider=='sstats' and season==2026:
   md1=[m.kickoff_at for m in matches if (classify_ucl_round(season,m.kickoff_at) or {}).get('stage')=='league_phase' and (classify_ucl_round(season,m.kickoff_at) or {}).get('matchday')==1]
   if md1:return min(md1)
  return matches[0].kickoff_at
@@ -56,19 +58,19 @@ def _player_out(player:Player|None):
  if not player:return None
  return {'id':player.id,'sstats_id':player.provider_id if player.provider=='sstats' else None,'name':player.display_name or player.name,'team':team_name_ru(player.team_name) if player.team_name else None,'team_original':player.team_name,'position':player.position,'number':player.shirt_number,'nationality':player.nationality,'photo':f'/api/players/{player.id}/photo' if (player.photo_data or player.photo_source_url) else None}
 
-async def _out(db,p,deadline):
- now=datetime.now(timezone.utc);result={'provider':p.provider if p else None,'season':p.season if p else None,'deadline_at':deadline,'locked':now>=deadline,'prediction':None}
+async def _out(db,p,deadline,tournament_id=None):
+ now=datetime.now(timezone.utc);result={'provider':p.provider if p else None,'season':p.season if p else None,'tournament_id':p.tournament_id if p else tournament_id,'deadline_at':deadline,'locked':now>=deadline,'prediction':None}
  if not p:return result
  ids=[x for x in (p.top_scorer_player_id,p.top_assistant_player_id,p.best_player_player_id) if x];players=(await db.execute(select(Player).where(Player.id.in_(ids)))).scalars().all() if ids else [];by_id={x.id:x for x in players}
  result['prediction']={'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(by_id.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(by_id.get(p.top_assistant_player_id)),'best_player_player':_player_out(by_id.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
  return result
 
-async def _competition_team_models(db,provider,season):
- matches=await _main_stage_matches(db,provider,season)
+async def _competition_team_models(db,provider,season,tournament_id:int|None=None):
+ matches=await _main_stage_matches(db,provider,season,tournament_id)
  ids={i for m in matches for i in (m.home_team_id,m.away_team_id) if i is not None}
  if not ids:return []
  teams=(await db.execute(select(Team).where(Team.id.in_(ids)).order_by(Team.name))).scalars().all()
- if provider!='sstats':return teams
+ if provider!='sstats' or tournament_id is not None:return teams
  season_year=season+1 if season<2100 else season
  try:uefa_teams=await UEFAProvider().competition_teams(1,season_year)
  except Exception:return [t for t in teams if t.uefa_id is not None]
@@ -101,8 +103,8 @@ async def _competition_team_models(db,provider,season):
  if changed:await db.commit()
  return eligible
 
-async def _competition_teams(db,provider,season):
- teams=await _competition_team_models(db,provider,season)
+async def _competition_teams(db,provider,season,tournament_id:int|None=None):
+ teams=await _competition_team_models(db,provider,season,tournament_id)
  return [{'id':t.id,'provider_id':t.provider_id,'uefa_id':t.uefa_id,'name':t.name,'display_name':team_name_ru(t.name),'logo':f'/api/team-logo/db/{t.id}'} for t in teams]
 
 @router.get('/mapping-status')
@@ -120,13 +122,13 @@ async def mapping_status(provider:str='sstats',season:int=2026,db:AsyncSession=D
  return {'competition':'UEFA Champions League','season':season,'uefa_season_year':season_year,'uefa_total':len(uefa_teams),'sstats_main_stage_total':len(sstats_teams),'matched':len(matched),'unmatched_sstats_count':len(unmatched_sstats),'unmatched_uefa_count':len(unmatched_uefa),'unmatched_sstats':unmatched_sstats,'unmatched_uefa':unmatched_uefa}
 
 @router.get('/options/teams')
-async def team_options(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- del user;items=await _competition_teams(db,provider,season);items.sort(key=lambda x:x['display_name']);return {'count':len(items),'response':items}
+async def team_options(provider:str='sstats',season:int=2026,tournament_id:int|None=None,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ del user;items=await _competition_teams(db,provider,season,tournament_id);items.sort(key=lambda x:x['display_name']);return {'count':len(items),'response':items}
 
 @router.get('/options/players')
-async def player_options(q:str|None=Query(default=None,max_length=80),provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+async def player_options(q:str|None=Query(default=None,max_length=80),provider:str='sstats',season:int=2026,tournament_id:int|None=None,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  del user
- teams=await _competition_team_models(db,provider,season);team_provider_ids={t.provider_id for t in teams if t.provider=='sstats'}
+ teams=await _competition_team_models(db,provider,season,tournament_id);team_provider_ids={t.provider_id for t in teams if t.provider=='sstats'}
  stmt=select(Player).where(Player.provider=='sstats',Player.is_active.is_(True))
  if team_provider_ids:stmt=stmt.where(Player.team_provider_id.in_(team_provider_ids))
  else:stmt=stmt.where(False)
@@ -135,32 +137,41 @@ async def player_options(q:str|None=Query(default=None,max_length=80),provider:s
  stmt=stmt.order_by(Player.is_popular.desc(),Player.name).limit(40);rows=(await db.execute(stmt)).scalars().all();return {'count':len(rows),'response':[_player_out(x) for x in rows]}
 
 @router.get('/mine')
-async def mine(provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- deadline=await _deadline(db,provider,season);p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season));r=await _out(db,p,deadline);r['provider']=provider;r['season']=season;return r
+async def mine(provider:str='sstats',season:int=2026,tournament_id:int|None=None,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ deadline=await _deadline(db,provider,season,tournament_id);stmt=select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season)
+ if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
+ else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
+ p=await db.scalar(stmt);r=await _out(db,p,deadline,tournament_id);r['provider']=provider;r['season']=season;return r
 
-async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str,provider:str,season:int)->Player:
+async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str,provider:str,season:int,tournament_id:int|None=None)->Player:
  if not player_id:raise HTTPException(422,f'Выбери игрока «{submitted_name}» из списка')
  player=await db.get(Player,player_id)
  if not player or player.provider!='sstats' or not player.is_active:raise HTTPException(422,'Выбранный игрок отсутствует в актуальном каталоге SStats')
- teams=await _competition_team_models(db,provider,season);allowed_team_ids={t.provider_id for t in teams if t.provider=='sstats'}
+ teams=await _competition_team_models(db,provider,season,tournament_id);allowed_team_ids={t.provider_id for t in teams if t.provider=='sstats'}
  if player.team_provider_id not in allowed_team_ids:raise HTTPException(422,'Выбранный игрок не участвует в этом турнире')
  return player
 
 @router.put('/mine')
-async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=2026,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
- deadline=await _deadline(db,provider,season);now=datetime.now(timezone.utc)
+async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=2026,tournament_id:int|None=None,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ if tournament_id is not None:
+  tournament=await db.get(Tournament,tournament_id)
+  if not tournament or tournament.provider!=provider:raise HTTPException(422,'Invalid tournament')
+ deadline=await _deadline(db,provider,season,tournament_id);now=datetime.now(timezone.utc)
  if now>=deadline:raise HTTPException(409,'Tournament prediction deadline has passed')
- values={k:getattr(body,k).strip() for k in ('winner','second_place','third_place','top_scorer','top_assistant','best_player')};teams=await _competition_teams(db,provider,season);allowed={x['name'].casefold():x['name'] for x in teams}
+ values={k:getattr(body,k).strip() for k in ('winner','second_place','third_place','top_scorer','top_assistant','best_player')};teams=await _competition_teams(db,provider,season,tournament_id);allowed={x['name'].casefold():x['name'] for x in teams}
  for k in ('winner','second_place','third_place'):
   canonical=allowed.get(values[k].casefold())
   if canonical is None:raise HTTPException(422,f'{values[k]} is not a team in this tournament')
   values[k]=canonical
  if len({values['winner'].casefold(),values['second_place'].casefold(),values['third_place'].casefold()})<3:raise HTTPException(422,'Winner, second and third place must be different teams')
- scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer,provider,season);assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant,provider,season);best=await _canonical_player(db,body.best_player_player_id,body.best_player,provider,season)
+ scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer,provider,season,tournament_id);assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant,provider,season,tournament_id);best=await _canonical_player(db,body.best_player_player_id,body.best_player,provider,season,tournament_id)
  values['top_scorer']=scorer.name;values['top_assistant']=assistant.name;values['best_player']=best.name;player_ids={'top_scorer_player_id':scorer.id,'top_assistant_player_id':assistant.id,'best_player_player_id':best.id}
- p=await db.scalar(select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season))
- if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,deadline_at=deadline,**values,**player_ids);db.add(p)
+ stmt=select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season)
+ if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
+ else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
+ p=await db.scalar(stmt)
+ if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,tournament_id=tournament_id,deadline_at=deadline,**values,**player_ids);db.add(p)
  else:
   for k,v in {**values,**player_ids}.items():setattr(p,k,v)
-  p.deadline_at=deadline;p.updated_at=now
- await db.commit();await db.refresh(p);return await _out(db,p,deadline)
+  p.tournament_id=tournament_id;p.deadline_at=deadline;p.updated_at=now
+ await db.commit();await db.refresh(p);return await _out(db,p,deadline,tournament_id)
