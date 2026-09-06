@@ -15,6 +15,26 @@ def _streak(values,needle):
  return best
 def _round_key(m):return (m.round_name or '').strip() or 'Без тура'
 def _is_completed(m):return m.status_short in FINAL_MATCH_STATUSES and m.home_goals is not None and m.away_goals is not None
+def _level(current,thresholds):
+ if current>=thresholds[2]:return 3
+ if current>=thresholds[1]:return 2
+ if current>=thresholds[0]:return 1
+ return 0
+def _catalog(mine):
+ mine=mine or {};wins=sum(a.get('code')=='round_winner' for a in mine.get('round_awards',[]));perfect=sum(a.get('code')=='perfect_round' for a in mine.get('round_awards',[]))
+ specs=[
+  ('sniper','Снайпер','🎯','Угадывай точный счёт матча.',mine.get('exacts',0),(1,5,10),'точных счетов'),
+  ('exact_streak','Серия точных','🔥','Угадай несколько точных счетов подряд.',mine.get('best_exact_streak',0),(2,3,4),'подряд'),
+  ('hit_streak','На серии','⚡','Набирай очки в нескольких прогнозах подряд.',mine.get('best_hit_streak',0),(3,6,10),'успешных прогнозов подряд'),
+  ('oracle_hunter','Охотник на Оракула','✦','Набери за матч больше очков, чем Оракул.',mine.get('oracle_wins',0),(1,5,10),'побед над Оракулом'),
+  ('only_one','Один такой','💎','Будь единственным в лиге, кто угадал точный счёт матча.',mine.get('unique_exacts',0),(1,3,5),'уникальных точных'),
+  ('round_champion','Король тура','🏆','Набери больше всех очков в полностью завершённом туре.',wins,(1,3,5),'побед в турах'),
+  ('perfect_round','Идеальный тур','👑','Сделай прогноз на каждый доступный матч тура и угадай каждый точный счёт.',perfect,(1,2,3),'идеальных туров'),
+ ]
+ out=[]
+ for code,title,icon,description,current,thresholds,unit in specs:
+  level=_level(current,thresholds);next_target=thresholds[level] if level<3 else thresholds[2];out.append({'code':code,'title':title,'icon':icon,'description':description,'current':current,'level':level,'unlocked':level>0,'thresholds':{'level_1':thresholds[0],'level_2':thresholds[1],'level_3':thresholds[2]},'next_target':next_target,'remaining':max(0,next_target-current),'unit':unit,'maxed':level==3})
+ return out
 @router.get('/{league_id}/achievements')
 async def achievements(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  league=await db.get(UserLeague,league_id)
@@ -58,15 +78,13 @@ async def achievements(league_id:int,user:User=Depends(get_current_user),db:Asyn
    if vals:scores.append({'user_id':u.id,'display_name':u.display_name,'points':sum(vals),'exacts':sum(x==3 for x in vals),'hits':sum(x>0 for x in vals),'predictions':len(vals),'eligible':len(eligible)})
   if not scores:continue
   best=max(x['points'] for x in scores);winners=[x for x in scores if x['points']==best];awards=[]
-  for x in winners:
-   awards.append({'code':'round_winner','title':'Лучший прогнозист тура','icon':'🏆','user_id':x['user_id'],'display_name':x['display_name'],'value':x['points']});by_user[x['user_id']]['round_awards'].append({'code':'round_winner','title':'Лучший прогнозист тура','icon':'🏆','round':round_name,'value':x['points']})
+  for x in winners:awards.append({'code':'round_winner','title':'Лучший прогнозист тура','icon':'🏆','user_id':x['user_id'],'display_name':x['display_name'],'value':x['points']});by_user[x['user_id']]['round_awards'].append({'code':'round_winner','title':'Лучший прогнозист тура','icon':'🏆','round':round_name,'value':x['points']})
   for x in scores:
-   if x['eligible']>0 and x['predictions']==x['eligible'] and x['exacts']==x['eligible']:
-    awards.append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','user_id':x['user_id'],'display_name':x['display_name'],'value':x['exacts']});by_user[x['user_id']]['round_awards'].append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','round':round_name,'value':x['exacts']})
+   if x['eligible']>0 and x['predictions']==x['eligible'] and x['exacts']==x['eligible']:awards.append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','user_id':x['user_id'],'display_name':x['display_name'],'value':x['exacts']});by_user[x['user_id']]['round_awards'].append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','round':round_name,'value':x['exacts']})
   round_awards.append({'round':round_name,'complete':True,'match_count':len(rmatches),'awards':awards,'ranking':sorted(scores,key=lambda x:(-x['points'],-x['exacts'],-x['hits'],x['display_name'].casefold()))})
  for r in rows:
   wins=sum(a['code']=='round_winner' for a in r['round_awards']);perfect=sum(a['code']=='perfect_round' for a in r['round_awards'])
   if wins:r['achievements'].append({'code':'round_champion','title':'Король тура','icon':'🏆','value':wins,'level':3 if wins>=5 else 2 if wins>=3 else 1,'subtitle':'побед в турах'})
   if perfect:r['achievements'].append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','value':perfect,'level':3 if perfect>=3 else 2 if perfect>=2 else 1,'subtitle':'идеальных туров'})
  rows.sort(key=lambda x:(-len(x['achievements']),-x['exacts'],-x['oracle_wins'],x['display_name'].casefold()));mine=next((x for x in rows if x['is_me']),None)
- return {'league_id':league_id,'count':len(rows),'mine':mine,'round_awards':round_awards,'response':rows}
+ return {'league_id':league_id,'count':len(rows),'mine':mine,'catalog':_catalog(mine),'round_awards':round_awards,'response':rows}
