@@ -9,7 +9,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, Tournament, User, UserLeague
 
-router = APIRouter(prefix="/api/leagues", tags=["test-fixture"])
+router = APIRouter(tags=["test-fixture"])
 
 TEST_LEAGUE_NAME = "🧪 Тест: достижения + LIVE"
 TEST_TOURNAMENT_PROVIDER_ID = 990001
