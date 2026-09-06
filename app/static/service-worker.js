@@ -1,8 +1,8 @@
-const CACHE_NAME='guess-the-score-pwa-v1';
+const CACHE_NAME='guess-the-score-pwa-v2';
 const STATIC_ASSETS=[
-  '/static/manifest.webmanifest',
-  '/static/pwa-icon.svg?v=1',
-  '/static/pwa.js?v=1'
+  '/static/manifest.webmanifest?v=2',
+  '/static/pwa-icon.svg?v=2',
+  '/static/pwa.js?v=2'
 ];
 
 self.addEventListener('install',event=>{
@@ -48,8 +48,8 @@ self.addEventListener('push',event=>{
   const title=data.title||'Угадай счёт';
   const options={
     body:data.body||'Новое уведомление',
-    icon:'/static/pwa-icon.svg?v=1',
-    badge:'/static/pwa-icon.svg?v=1',
+    icon:'/static/pwa-icon.svg?v=2',
+    badge:'/static/pwa-icon.svg?v=2',
     data:{url:data.url||'/'},
     tag:data.tag||undefined,
     renotify:Boolean(data.renotify)
