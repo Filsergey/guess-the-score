@@ -7,13 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.config import get_settings
 from app.database import get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
-from app.services.competition_prepare import prepare_sstats_competition
+from app.services.sstats_sync import sync_sstats_competition
 
 router = APIRouter(prefix="/api/leagues", tags=["league-catalog"])
-settings = get_settings()
 
 TOP_TOURNAMENTS = (
     {"league_id": 2, "name": "UEFA Champions League", "country": "Europe"},
@@ -60,10 +58,7 @@ def _upstream_error_message(exc: Exception) -> str:
             status = current.response.status_code
             reason = current.response.reason_phrase or "HTTP error"
             if status == 429:
-                suffix = "лимит запросов SStats"
-                if not settings.sstats_api_key:
-                    suffix += "; SSTATS_API_KEY не настроен"
-                return f"SStats HTTP 429 Too Many Requests — {suffix}"
+                return "SStats HTTP 429 Too Many Requests"
             return f"SStats HTTP {status} {reason}"
         current = current.__cause__ or current.__context__
     return base
@@ -126,12 +121,7 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
         }
         for item in TOP_TOURNAMENTS
     ]
-    return {
-        "count": len(response),
-        "response": response,
-        "source": "fixed-top-tournaments",
-        "sstats_api_key_configured": bool(settings.sstats_api_key),
-    }
+    return {"count": len(response), "response": response, "source": "fixed-top-tournaments"}
 
 
 @router.get("/catalog/logo-check")
@@ -162,11 +152,11 @@ async def sync_catalog_tournament(
     if configured is None:
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
 
-    # Deliberately blocking: the user league is created only after matches, teams,
-    # players and other core football data for the selected season are prepared.
-    # Missing team logos are allowed and filled in the background.
+    # Same simple flow that was used for the full SStats catalog: sync the selected
+    # season's matches and teams, then create the user league. Extra metadata such
+    # as missing logos/player details can be filled by the existing background/on-demand flows.
     try:
-        result = await prepare_sstats_competition(
+        result = await sync_sstats_competition(
             db,
             body.league_id,
             body.year,
@@ -177,18 +167,15 @@ async def sync_catalog_tournament(
         message = _upstream_error_message(exc)
         if len(message) > 500:
             message = message[:497] + "..."
-        raise HTTPException(
-            502,
-            f"Турнир пока не готов: {message}. Лига не создана.",
-        ) from exc
+        raise HTTPException(502, f"Не удалось синхронизировать турнир: {message}") from exc
 
     tournament_id = result.get("tournament_id")
-    if not tournament_id or result.get("status") != "ready":
-        raise HTTPException(502, "Турнир подготовлен не полностью. Лига не создана.")
+    if not tournament_id or int(result.get("received") or 0) <= 0:
+        raise HTTPException(502, "SStats не вернул матчи выбранного турнира и сезона")
 
     tournament = await db.get(Tournament, int(tournament_id))
     if tournament is None:
-        raise HTTPException(502, "Турнир исчез после синхронизации. Лига не создана.")
+        raise HTTPException(502, "Турнир не найден после синхронизации")
     tournament.name = configured["name"]
     tournament.country = configured["country"]
     tournament.logo_url = f"/api/leagues/tournament-logo/{body.league_id}"
@@ -201,7 +188,6 @@ async def sync_catalog_tournament(
         "name": tournament.name,
         "ready": True,
         "sync": result,
-        "sstats_api_key_configured": bool(settings.sstats_api_key),
     }
 
 
