@@ -83,6 +83,23 @@ def _catalog_priority(item: dict) -> tuple:
     return (1, 99, country, name)
 
 
+def _popular_name(name: str) -> str | None:
+    n = str(name or "").lower().replace("-", " ")
+    if any(word in n for word in ("women", "woman", "femin", "u19", "u20", "u21", "u23", "youth", "reserve")):
+        return None
+    if "champions league" in n:
+        return "Лига чемпионов"
+    if "premier league" in n:
+        return "Premier League"
+    if any(x in n for x in ("la liga", "laliga", "primera division")):
+        return "La Liga"
+    if "serie a" in n:
+        return "Serie A"
+    if "bundesliga" in n:
+        return "Bundesliga"
+    return None
+
+
 async def _theme_league(league_id: int, user: User, db: AsyncSession) -> UserLeague:
     league = await db.get(UserLeague, league_id)
     if league is None:
@@ -133,6 +150,46 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
         })
     result.sort(key=_catalog_priority)
     return {"count": len(result), "response": result}
+
+
+@router.get("/catalog/logo-check")
+async def tournament_logo_check(user: User = Depends(get_current_user)):
+    if user.role != "superadmin":
+        raise HTTPException(403, "Logo diagnostics are available only to superadmin")
+    try:
+        payload = await SStatsProvider().get_leagues()
+    except Exception as exc:
+        raise HTTPException(502, f"SStats catalog unavailable: {type(exc).__name__}") from exc
+    rows = payload.get("data") or payload.get("response") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    found = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        name = str(_pick(row, "name", "Name", "leagueName", "LeagueName", default=""))
+        popular = _popular_name(name)
+        if not popular:
+            continue
+        found.append({
+            "popular_name": popular,
+            "league_id": _pick(row, "id", "Id", "leagueId", "LeagueId"),
+            "name": name,
+            "country": _country_name(_pick(row, "country", "Country", "countryName", "CountryName")),
+            "logo_candidates": {
+                key: row.get(key)
+                for key in ("logoUrl", "LogoUrl", "logo", "Logo", "image", "Image", "icon", "Icon", "badge", "Badge")
+                if key in row
+            },
+            "all_keys": sorted(row.keys()),
+        })
+    order = {"Лига чемпионов": 0, "Premier League": 1, "La Liga": 2, "Serie A": 3, "Bundesliga": 4}
+    found.sort(key=lambda x: (order.get(x["popular_name"], 99), str(x.get("country") or ""), x["name"]))
+    return {
+        "sstats_top_level_keys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+        "matches": found,
+        "has_any_logo_field": any(bool(x["logo_candidates"]) for x in found),
+    }
 
 
 @router.post("/catalog/sync")
