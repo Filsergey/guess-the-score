@@ -5,11 +5,15 @@ import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import SessionLocal
 from app.models import Match, Player, Team, Tournament
 from app.players import sync_sstats_team_players
 from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 from app.services.sstats_sync import SSTATS_PROVIDER, sync_sstats_competition
+
+
+_logo_background_tasks: set[asyncio.Task] = set()
 
 
 async def _retry_http(factory, attempts: int = 4):
@@ -224,16 +228,81 @@ async def _hydrate_team_metadata_bulk(
     await session.commit()
 
 
+async def _background_fill_missing_logos(team_ids: list[int]) -> None:
+    """Best-effort logo repair that never blocks user league creation."""
+    if not team_ids:
+        return
+
+    for delay in (3, 45, 180, 600):
+        await asyncio.sleep(delay)
+        async with SessionLocal() as session:
+            teams = (
+                await session.execute(
+                    select(Team).where(Team.id.in_(team_ids)).order_by(Team.name)
+                )
+            ).scalars().all()
+            pending = [
+                team
+                for team in teams
+                if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
+            ]
+            if not pending:
+                return
+
+            # API-Football is a cheap metadata fallback when configured.
+            try:
+                await _hydrate_missing_logos_from_api_football(session, pending)
+            except Exception:
+                await session.rollback()
+
+            pending = [
+                team
+                for team in pending
+                if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
+            ]
+            if not pending:
+                return
+
+            # Retry SStats later as well: its team metadata can appear after the fixture feed.
+            provider = SStatsProvider()
+            anonymous = not bool(provider.settings.sstats_api_key)
+            for index, team in enumerate(pending):
+                try:
+                    payload = await provider.get_team(team.provider_id)
+                    rows = _payload_rows(payload)
+                    row = rows[0] if rows else (
+                        payload.get("data") if isinstance(payload.get("data"), dict) else payload
+                    )
+                    if isinstance(row, dict):
+                        _apply_team_row(team, row)
+                except Exception:
+                    pass
+                if anonymous and index < len(pending) - 1:
+                    await asyncio.sleep(2.2)
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+
+
+def _schedule_missing_logo_background(team_ids: list[int]) -> None:
+    if not team_ids:
+        return
+    task = asyncio.create_task(_background_fill_missing_logos(team_ids))
+    _logo_background_tasks.add(task)
+    task.add_done_callback(_logo_background_tasks.discard)
+
+
 async def prepare_sstats_competition(
     session: AsyncSession,
     league_id: int,
     year: int,
     league_name: str,
 ):
-    """Prepare everything first; only then may the user league be created.
+    """Prepare match/team/player data before a user league is created.
 
-    The anonymous SStats limit is small, so the preparation is deliberately paced
-    when SSTATS_API_KEY is not configured. Existing player catalogs are reused.
+    Missing team crests are non-blocking: the league may be created once the actual
+    football data is ready, while logo recovery continues in the background.
     """
     sync = await _sync_matches_with_cooldown(session, league_id, year, league_name)
     tournament_id = sync.get("tournament_id")
@@ -271,21 +340,13 @@ async def prepare_sstats_competition(
         await session.rollback()
         raise RuntimeError(f"Не удалось загрузить данные команд: {_http_label(exc)}") from exc
 
-    logo_fallback = await _hydrate_missing_logos_from_api_football(session, teams)
-    missing_logos = [
-        team.name
+    missing_logo_teams = [
+        team
         for team in teams
         if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
     ]
-    if missing_logos:
-        preview = ", ".join(missing_logos[:6])
-        suffix = "…" if len(missing_logos) > 6 else ""
-        extra = (
-            " API_FOOTBALL_KEY не настроен."
-            if not logo_fallback.get("configured")
-            else " API-Football тоже не нашёл логотип."
-        )
-        raise RuntimeError(f"Не загрузились логотипы команд: {preview}{suffix}.{extra}")
+    if missing_logo_teams:
+        _schedule_missing_logo_background([int(team.id) for team in missing_logo_teams])
 
     # With a personal key we can work quickly. Without it SStats documents a 30 req/min
     # per-IP anonymous limit, so keep enough headroom for live updates.
@@ -353,11 +414,12 @@ async def prepare_sstats_competition(
         "status": "ready",
         "matches_ready": len(matches),
         "teams_ready": len(teams),
-        "team_logos_ready": len(teams),
+        "team_logos_ready": len(teams) - len(missing_logo_teams),
+        "team_logos_pending": [team.name for team in missing_logo_teams],
+        "logo_background_scheduled": bool(missing_logo_teams),
         "players_ready": sum(player_counts.values()),
         "teams_with_players": sum(1 for value in player_counts.values() if value > 0),
         "player_sync": player_results,
-        "logo_fallback": logo_fallback,
         "sstats_api_key_configured": not anonymous,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
     }
