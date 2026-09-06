@@ -26,5 +26,5 @@ window.GTS=Object.assign(window.GTS||{},state);
 window.gtsApi=(url,opts)=>window.GTS.api(url,opts);
 if(!document.querySelector('script[data-gts-tournament-scope]')){const s=document.createElement('script');s.src='/static/tournament-scope.js?v=1';s.dataset.gtsTournamentScope='1';document.head.appendChild(s)}
 if(!document.querySelector('script[data-gts-league-invite]')){const s=document.createElement('script');s.src='/static/league-invite.js?v=1';s.dataset.gtsLeagueInvite='1';document.head.appendChild(s)}
-if(!document.querySelector('script[data-gts-league-members]')){const s=document.createElement('script');s.src='/static/league-members.js?v=1';s.dataset.gtsLeagueMembers='1';document.head.appendChild(s)}
+if(!document.querySelector('script[data-gts-league-members]')){const s=document.createElement('script');s.src='/static/league-members.js?v=2';s.dataset.gtsLeagueMembers='1';document.head.appendChild(s)}
 })();
