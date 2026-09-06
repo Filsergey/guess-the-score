@@ -1,13 +1,14 @@
-import httpx
+import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.models import LeagueMember, Tournament, User, UserLeague
 from app.services.sstats_sync import sync_sstats_competition
 
@@ -76,6 +77,24 @@ def _theme_response(league: UserLeague) -> dict:
     }
 
 
+async def _sync_competition_in_background(league_id: int, year: int, league_name: str) -> None:
+    """Populate matches after league creation without making the user wait for SStats.
+
+    SStats occasionally returns transient HTTP errors. Creation must still succeed, so
+    we retry the idempotent sync in a fresh DB session a few times after the response.
+    """
+    for delay in (0, 4, 15):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            async with SessionLocal() as session:
+                await sync_sstats_competition(session, league_id, year, league_name)
+            return
+        except Exception:
+            # The next retry gets a new SQLAlchemy session and a clean transaction.
+            continue
+
+
 @router.get("/tournament-logo/{provider_id}")
 async def tournament_logo(provider_id: int):
     """Same-origin proxy for tournament badges so Telegram WebView never loads the CDN directly."""
@@ -132,6 +151,7 @@ async def tournament_logo_check():
 @router.post("/catalog/sync")
 async def sync_catalog_tournament(
     body: CatalogSyncBody,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -139,26 +159,49 @@ async def sync_catalog_tournament(
     configured = ALLOWED_TOURNAMENTS.get(body.league_id)
     if configured is None:
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
-    try:
-        result = await sync_sstats_competition(
-            db,
-            body.league_id,
-            body.year,
-            configured["name"],
+
+    # Tournament identity is local application data. It must not depend on SStats
+    # being online at the exact moment a user presses "Создать лигу".
+    tournament = await db.scalar(
+        select(Tournament).where(
+            Tournament.provider == "sstats",
+            Tournament.provider_id == body.league_id,
         )
-    except Exception as exc:
-        await db.rollback()
-        raise HTTPException(502, f"SStats tournament sync failed: {type(exc).__name__}") from exc
-    tournament_id = result.get("tournament_id")
-    if not tournament_id:
-        raise HTTPException(422, "SStats did not return matches for this tournament and season")
-    tournament = await db.get(Tournament, int(tournament_id))
+    )
+    if tournament is None:
+        tournament = Tournament(
+            provider="sstats",
+            provider_id=body.league_id,
+            name=configured["name"],
+            country=configured["country"],
+        )
+        db.add(tournament)
+        await db.flush()
+    else:
+        tournament.name = configured["name"]
+        tournament.country = configured["country"]
+    await db.commit()
+
+    # Match import is intentionally deferred. The endpoint now returns immediately,
+    # so a temporary SStats 4xx/5xx/timeout can never prevent league creation.
+    background_tasks.add_task(
+        _sync_competition_in_background,
+        body.league_id,
+        body.year,
+        configured["name"],
+    )
+
     return {
-        "tournament_id": int(tournament_id),
+        "tournament_id": int(tournament.id),
         "provider_id": body.league_id,
         "season": body.year,
-        "name": tournament.name if tournament else configured["name"],
-        "sync": result,
+        "name": tournament.name,
+        "sync": {
+            "status": "queued",
+            "provider": "sstats",
+            "league_id": body.league_id,
+            "year": body.year,
+        },
     }
 
 
