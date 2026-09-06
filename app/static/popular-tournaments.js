@@ -101,11 +101,11 @@ function installCreateProgress(){
  const wrapped=async function(...args){
   const btn=document.getElementById('createLeagueBtn');
   const started=Date.now();let lastButton='';
-  setLine('Синхронизируем матчи и команды · 0 с');
+  setLine('Загружаем матчи, команды, логотипы и игроков · 0 с');
   const render=()=>{
    const text=String(btn?.textContent||'');const sec=Math.max(0,Math.floor((Date.now()-started)/1000));
-   if(/Созда[её]м лигу/i.test(text))setLine(`Создаём лигу · ${sec} с`);
-   else setLine(`Синхронизируем матчи и команды · ${sec} с`);
+   if(/Созда[её]м лигу/i.test(text))setLine(`Данные загружены · создаём лигу · ${sec} с`);
+   else setLine(`Загружаем матчи, команды, логотипы и игроков · ${sec} с`);
    lastButton=text;
   };
   render();
@@ -123,5 +123,5 @@ function installCreateProgress(){
 }
 
 setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly;if(!installCreateProgress()){const t=setInterval(()=>{if(installCreateProgress())clearInterval(t)},50);setTimeout(()=>clearInterval(t),5000)}},0);
-if(!document.querySelector('script[data-gts-create-league-error]')){const s=document.createElement('script');s.src='/static/create-league-error.js?v=4';s.dataset.gtsCreateLeagueError='1';document.body.appendChild(s)}
+if(!document.querySelector('script[data-gts-create-league-error]')){const s=document.createElement('script');s.src='/static/create-league-error.js?v=5';s.dataset.gtsCreateLeagueError='1';document.body.appendChild(s)}
 })();
