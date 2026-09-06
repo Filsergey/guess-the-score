@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import SessionLocal
 from app.models import Match, Player, Team, Tournament
 from app.players import sync_sstats_team_players
-from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 from app.services.sstats_sync import SSTATS_PROVIDER, sync_sstats_competition
 
@@ -114,81 +113,6 @@ def _apply_team_row(team: Team, row: dict) -> None:
         team.logo_url = str(logo)
 
 
-def _normalize_team_name(value: str | None) -> str:
-    text = str(value or "").lower()
-    for token in ("fc", "cf", "afc", "ac", "ssc", "us", "calcio"):
-        text = text.replace(token, " ")
-    return " ".join(
-        text.replace(".", " ").replace("-", " ").replace("_", " ").split()
-    )
-
-
-def _pick_api_football_team(payload: dict, expected_name: str) -> dict:
-    rows = payload.get("response") or []
-    if not isinstance(rows, list) or not rows:
-        return {}
-    expected = _normalize_team_name(expected_name)
-    for row in rows:
-        team = row.get("team") if isinstance(row, dict) else None
-        if not isinstance(team, dict):
-            continue
-        candidate = _normalize_team_name(str(team.get("name") or ""))
-        if candidate == expected:
-            return team
-    if len(rows) == 1 and isinstance(rows[0], dict):
-        team = rows[0].get("team")
-        return team if isinstance(team, dict) else {}
-    return {}
-
-
-async def _hydrate_missing_logos_from_api_football(
-    session: AsyncSession,
-    teams: list[Team],
-) -> dict:
-    missing = [
-        team
-        for team in teams
-        if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
-    ]
-    if not missing:
-        return {"requested": 0, "updated": 0, "configured": True, "failed": []}
-
-    provider = APIFootballProvider()
-    if not provider.settings.api_football_key:
-        return {
-            "requested": len(missing),
-            "updated": 0,
-            "configured": False,
-            "failed": [team.name for team in missing],
-        }
-
-    updated = 0
-    failed = []
-    for team in missing:
-        search_name = team.source_name or team.name
-        try:
-            payload = await provider.search_teams(search_name)
-            api_team = _pick_api_football_team(payload, search_name)
-            logo = api_team.get("logo") if api_team else None
-            if isinstance(logo, str) and logo.startswith(("http://", "https://")):
-                team.logo_url = logo
-                code = api_team.get("code")
-                if code and not team.code:
-                    team.code = str(code)[:20]
-                updated += 1
-            else:
-                failed.append(team.name)
-        except Exception:
-            failed.append(team.name)
-    await session.commit()
-    return {
-        "requested": len(missing),
-        "updated": updated,
-        "configured": True,
-        "failed": failed,
-    }
-
-
 async def _hydrate_team_metadata_bulk(
     session: AsyncSession,
     provider: SStatsProvider,
@@ -229,7 +153,7 @@ async def _hydrate_team_metadata_bulk(
 
 
 async def _background_fill_missing_logos(team_ids: list[int]) -> None:
-    """Best-effort logo repair that never blocks user league creation."""
+    """Retry missing team crests from SStats only; never block league creation."""
     if not team_ids:
         return
 
@@ -249,21 +173,6 @@ async def _background_fill_missing_logos(team_ids: list[int]) -> None:
             if not pending:
                 return
 
-            # Try API-Football first when configured.
-            try:
-                await _hydrate_missing_logos_from_api_football(session, pending)
-            except Exception:
-                await session.rollback()
-
-            pending = [
-                team
-                for team in pending
-                if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
-            ]
-            if not pending:
-                return
-
-            # Retry SStats too: metadata can become available later than fixtures.
             provider = SStatsProvider()
             anonymous = not bool(provider.settings.sstats_api_key)
             for index, team in enumerate(pending):
@@ -301,9 +210,9 @@ async def prepare_sstats_competition(
 ):
     """Prepare match/team/player data before a user league is created.
 
-    Matches and teams are mandatory. Team metadata/logos are attempted in foreground,
-    but missing crests never block creation and are retried in background. Player
-    rosters are still mass-loaded before readiness is returned.
+    Matches and teams are mandatory. Team metadata/logos are attempted in foreground
+    through SStats only; missing crests never block creation and are retried in the
+    background. Player rosters are still mass-loaded before readiness is returned.
     """
     sync = await _sync_matches_with_cooldown(session, league_id, year, league_name)
     tournament_id = sync.get("tournament_id")
