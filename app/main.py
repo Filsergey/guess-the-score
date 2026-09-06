@@ -27,10 +27,12 @@ from app.player_photos import router as player_photos_router
 from app.players import router as players_router, bootstrap_popular_players
 from app.providers.sstats import SStatsProvider
 from app.services.oracle_scheduler import oracle_scheduler_loop
+from app.services.sstats_live import sync_sstats_live_matches
 from app.services.sstats_sync import sync_sstats_champions_league, sync_sstats_team_metadata
 settings=get_settings();STATIC_DIR=Path(__file__).resolve().parent/'static'
-AUTO_SYNC_INTERVAL_SECONDS=3600
+AUTO_SYNC_INTERVAL_SECONDS=3600;LIVE_SYNC_INTERVAL_SECONDS=30
 sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
+live_sync_runtime={'running':False,'last_started_at':None,'last_finished_at':None,'last_error':None,'last_result':None}
 def _current_sstats_season():
  now=datetime.now(timezone.utc);return now.year if now.month>=7 else now.year-1
 async def _automatic_sstats_sync_once():
@@ -43,22 +45,32 @@ async def _automatic_sstats_sync_once():
 async def automatic_sstats_sync_loop():
  await asyncio.sleep(5)
  while True:await _automatic_sstats_sync_once();await asyncio.sleep(AUTO_SYNC_INTERVAL_SECONDS)
+async def _automatic_live_sync_once():
+ if live_sync_runtime['running']:return
+ live_sync_runtime['running']=True;live_sync_runtime['last_started_at']=datetime.now(timezone.utc).isoformat();live_sync_runtime['last_error']=None
+ try:
+  async with SessionLocal() as db:live_sync_runtime['last_result']=await sync_sstats_live_matches(db,_current_sstats_season())
+ except Exception as exc:live_sync_runtime['last_error']=type(exc).__name__
+ finally:live_sync_runtime['running']=False;live_sync_runtime['last_finished_at']=datetime.now(timezone.utc).isoformat()
+async def automatic_live_sync_loop():
+ await asyncio.sleep(10)
+ while True:await _automatic_live_sync_once();await asyncio.sleep(LIVE_SYNC_INTERVAL_SECONDS)
 @asynccontextmanager
 async def lifespan(_:FastAPI):
  async with engine.begin() as conn:await conn.run_sync(Base.metadata.create_all);await migrate_provider_keys(conn)
- scheduler_task=asyncio.create_task(oracle_scheduler_loop()) if settings.oracle_scheduler_enabled else None;player_bootstrap_task=asyncio.create_task(bootstrap_popular_players());sstats_sync_task=asyncio.create_task(automatic_sstats_sync_loop())
+ scheduler_task=asyncio.create_task(oracle_scheduler_loop()) if settings.oracle_scheduler_enabled else None;player_bootstrap_task=asyncio.create_task(bootstrap_popular_players());sstats_sync_task=asyncio.create_task(automatic_sstats_sync_loop());live_sync_task=asyncio.create_task(automatic_live_sync_loop())
  try:yield
  finally:
-  for task in (scheduler_task,player_bootstrap_task,sstats_sync_task):
+  for task in (scheduler_task,player_bootstrap_task,sstats_sync_task,live_sync_task):
    if task:task.cancel()
    if task:
     with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.26.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.27.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=2"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=2"></script><script src="/static/match-detail.js?v=3"></script><script src="/static/match-feed.js?v=4"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=2"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=2"></script><script src="/static/match-detail.js?v=3"></script><script src="/static/match-feed.js?v=5"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
@@ -74,7 +86,7 @@ def serialize_sstats_details(d,g=None):
 async def health():return {'status':'ok','service':settings.app_name,'environment':settings.app_env}
 @app.get('/api/sync/status',include_in_schema=False)
 async def public_sync_status(db:AsyncSession=Depends(get_db)):
- season=_current_sstats_season();matches=(await db.execute(select(Match).where(Match.provider=='sstats',Match.season==season))).scalars().all();main=[m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None];return {'provider':'sstats','season':season,'automatic':True,'interval_seconds':AUTO_SYNC_INTERVAL_SECONDS,'running':sync_runtime['running'],'last_started_at':sync_runtime['last_started_at'],'last_finished_at':sync_runtime['last_finished_at'],'last_error':sync_runtime['last_error'],'matches_in_db':len(matches),'main_stage_matches':len(main),'status_counts':dict(sorted(Counter(m.status_short for m in main).items())),'status_groups':dict(sorted(Counter(status_group(m.status_short) for m in main).items()))}
+ season=_current_sstats_season();matches=(await db.execute(select(Match).where(Match.provider=='sstats',Match.season==season))).scalars().all();main=[m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None];return {'provider':'sstats','season':season,'automatic':True,'interval_seconds':AUTO_SYNC_INTERVAL_SECONDS,'running':sync_runtime['running'],'last_started_at':sync_runtime['last_started_at'],'last_finished_at':sync_runtime['last_finished_at'],'last_error':sync_runtime['last_error'],'live_sync':{'interval_seconds':LIVE_SYNC_INTERVAL_SECONDS,'running':live_sync_runtime['running'],'last_started_at':live_sync_runtime['last_started_at'],'last_finished_at':live_sync_runtime['last_finished_at'],'last_error':live_sync_runtime['last_error'],'last_result':live_sync_runtime['last_result']},'matches_in_db':len(matches),'main_stage_matches':len(main),'status_counts':dict(sorted(Counter(m.status_short for m in main).items())),'status_groups':dict(sorted(Counter(status_group(m.status_short) for m in main).items()))}
 @app.get('/api/admin/sstats/leagues')
 async def sstats_leagues(x_admin_token:str|None=Header(default=None)):require_admin_token(x_admin_token);return await SStatsProvider().get_leagues()
 @app.get('/api/admin/sstats/games')
