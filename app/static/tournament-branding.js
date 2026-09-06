@@ -1,42 +1,17 @@
 (()=>{
-const LOGOS={
-  2:'/api/leagues/tournament-logo/2',
-  39:'/api/leagues/tournament-logo/39',
-  140:'/api/leagues/tournament-logo/140',
-  135:'/api/leagues/tournament-logo/135',
-  78:'/api/leagues/tournament-logo/78'
-};
-function tournamentForLeague(league){
-  const tournaments=window.getTournaments?.()||[];
-  if(!league)return null;
-  return tournaments.find(t=>Number(t.id)===Number(league.tournament_id)&&Number(t.season)===Number(league.tournament_season))||tournaments.find(t=>Number(t.id)===Number(league.tournament_id))||null;
-}
-function img(logo){return `<img src="${logo}" alt="" loading="eager">`}
-function applyHeader(){
-  const box=document.getElementById('leagueSelect'),icon=box?.querySelector('.selector-icon');
-  if(!box||!icon)return;
-  const tournament=tournamentForLeague(window.getSelectedLeague?.());
-  const logo=LOGOS[Number(tournament?.provider_id)];
-  if(!logo){box.classList.remove('has-tournament-brand');return}
-  icon.innerHTML=img(logo);
-  icon.classList.add('has-tournament-logo');
-  box.classList.add('has-tournament-brand');
-}
-function applyCards(){
-  const leagues=window.getLeagues?.()||[];
-  const cards=[...document.querySelectorAll('#leaguesView .league-card')];
-  cards.forEach((card,i)=>{
-    const league=leagues[i],emblem=card.querySelector('.league-emblem');
-    if(!league||!emblem)return;
-    const tournament=tournamentForLeague(league),logo=LOGOS[Number(tournament?.provider_id)];
-    if(!logo)return;
-    const existing=emblem.querySelector('img');
-    if(existing?.src?.startsWith('data:'))return;
-    emblem.innerHTML=img(logo);
-    emblem.classList.add('has-tournament-logo');
+function decorateExistingLogos(){
+  const box=document.getElementById('leagueSelect'),headerIcon=box?.querySelector('.selector-icon');
+  const headerImg=headerIcon?.querySelector('img');
+  if(box&&headerIcon){
+    const has=Boolean(headerImg);
+    box.classList.toggle('has-tournament-brand',has);
+    headerIcon.classList.toggle('has-tournament-logo',has);
+  }
+  document.querySelectorAll('#leaguesView .league-emblem').forEach(emblem=>{
+    emblem.classList.toggle('has-tournament-logo',Boolean(emblem.querySelector('img')));
   });
 }
-function applyTournamentBranding(){applyHeader();applyCards()}
+function applyTournamentBranding(){decorateExistingLogos()}
 const style=document.createElement('style');
 style.textContent=`
 #leagueSelect.has-tournament-brand{padding-left:58px}
@@ -50,11 +25,19 @@ style.textContent=`
   #leagueSelect .selector-icon.has-tournament-logo img{width:30px;height:30px;padding:3px}
 }`;
 document.head.appendChild(style);
-document.addEventListener('gts:ready',()=>setTimeout(applyTournamentBranding,120));
-document.addEventListener('gts:league-change',()=>setTimeout(applyTournamentBranding,120));
-const obs=new MutationObserver(()=>setTimeout(applyTournamentBranding,0));
-const startObserver=()=>{const root=document.getElementById('leaguesView');if(root)obs.observe(root,{childList:true,subtree:true})};
-setTimeout(()=>{startObserver();applyTournamentBranding()},900);
-setTimeout(applyTournamentBranding,1800);
+let scheduled=false;
+function schedule(){
+  if(scheduled)return;
+  scheduled=true;
+  requestAnimationFrame(()=>{scheduled=false;applyTournamentBranding()});
+}
+document.addEventListener('gts:ready',schedule);
+document.addEventListener('gts:league-change',schedule);
+const startObserver=()=>{
+  const root=document.getElementById('leaguesView');
+  if(!root)return;
+  new MutationObserver(schedule).observe(root,{childList:true,subtree:true});
+};
+setTimeout(()=>{startObserver();schedule()},500);
 window.applyTournamentBranding=applyTournamentBranding;
 })();
