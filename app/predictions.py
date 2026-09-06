@@ -57,17 +57,16 @@ async def match_prediction_participants(match_id:int,league_id:int|None=Query(de
     match=await db.get(Match,match_id)
     if match is None:raise HTTPException(404,"Match not found")
     started=datetime.now(timezone.utc)>=match.kickoff_at;live=is_live_status(match.status_short);final=match_is_final(match)
-    league=None
+    league=None;human_members=0
     if league_id is not None:
         league=await db.get(UserLeague,league_id)
         if league is None:raise HTTPException(404,"League not found")
         membership=await db.scalar(select(LeagueMember).where(LeagueMember.league_id==league_id,LeagueMember.user_id==user.id))
         if membership is None and user.role!="superadmin":raise HTTPException(403,"You are not a member of this league")
         if match.provider!=league.tournament_provider or match.season!=league.tournament_season:raise HTTPException(409,"Match does not belong to this league tournament")
-        rows=(await db.execute(select(LeagueMember,User,Prediction).join(User,User.id==LeagueMember.user_id).outerjoin(Prediction,and_(Prediction.user_id==User.id,Prediction.match_id==match_id)).where(LeagueMember.league_id==league_id).order_by(User.display_name))).all()
+        rows=(await db.execute(select(LeagueMember,User,Prediction).join(User,User.id==LeagueMember.user_id).outerjoin(Prediction,and_(Prediction.user_id==User.id,Prediction.match_id==match_id)).where(LeagueMember.league_id==league_id).order_by(User.display_name))).all();human_members=len(rows)
     else:
-        # Compatibility mode for clients that have no league selected yet.
-        rows=[(None,u,p) for p,u in (await db.execute(select(Prediction,User).join(User,Prediction.user_id==User.id).where(Prediction.match_id==match_id).order_by(User.display_name))).all()]
+        rows=[(None,u,p) for p,u in (await db.execute(select(Prediction,User).join(User,Prediction.user_id==User.id).where(Prediction.match_id==match_id).order_by(User.display_name))).all()];human_members=len(rows)
     response=[];submitted=0
     for member,participant,prediction in rows:
         mine=participant.id==user.id;has=prediction is not None;submitted+=int(has)
@@ -76,14 +75,29 @@ async def match_prediction_participants(match_id:int,league_id:int|None=Query(de
             pts=prediction_points(prediction,match) if final else None;live_pts=score_points(prediction.home_score,prediction.away_score,match.home_goals,match.away_goals) if live else None
             item["prediction"]={"home_score":prediction.home_score,"away_score":prediction.away_score,"points":pts,"live_points":live_pts}
         response.append(item)
+    oracle_included=False
     if league and league.include_oracle:
-        op=await db.scalar(select(OraclePrediction).where(OraclePrediction.match_id==match_id));prediction=None
+        oracle_included=True;op=await db.scalar(select(OraclePrediction).where(OraclePrediction.match_id==match_id));prediction=None
         if op and op.generated_at and op.generated_at<match.kickoff_at:
             try:
                 payload=json.loads(op.payload_json);ph=int(payload["home_score"]);pa=int(payload["away_score"]);prediction={"home_score":ph,"away_score":pa,"points":score_points(ph,pa,match.home_goals,match.away_goals) if final else None,"live_points":score_points(ph,pa,match.home_goals,match.away_goals) if live else None}
             except (ValueError,TypeError,KeyError,json.JSONDecodeError):pass
         response.append({"user_id":None,"display_name":"Оракул","username":None,"avatar_url":None,"has_prediction":prediction is not None,"is_mine":False,"is_oracle":True,"member_role":"oracle","prediction":prediction})
-    return {"match_id":match_id,"league_id":league_id,"started":started,"live":live,"final":final,"predictions_visible":started,"member_count":len(response),"submitted_count":submitted,"score":{"home":match.home_goals,"away":match.away_goals} if (live or final) else None,"response":response}
+    if live or final:
+        key="live_points" if live else "points"
+        response.sort(key=lambda x:(-(x.get("prediction") or {}).get(key,-1),not x.get("has_prediction"),(x.get("display_name") or "").casefold()))
+        rank=0;last_points=None
+        for index,item in enumerate(response,1):
+            pts=(item.get("prediction") or {}).get(key)
+            if pts is None:item["match_rank"]=None;continue
+            if pts!=last_points:rank=index;last_points=pts
+            item["match_rank"]=rank
+    leaders=[]
+    if live:
+        valid=[x for x in response if (x.get("prediction") or {}).get("live_points") is not None]
+        if valid:
+            best=max((x["prediction"]["live_points"] for x in valid),default=0);leaders=[{"user_id":x.get("user_id"),"display_name":x.get("display_name"),"is_oracle":x.get("is_oracle",False),"live_points":best} for x in valid if x["prediction"]["live_points"]==best]
+    return {"match_id":match_id,"league_id":league_id,"started":started,"live":live,"final":final,"predictions_visible":started,"human_member_count":human_members,"participant_count":len(response),"submitted_count":submitted,"oracle_included":oracle_included,"score":{"home":match.home_goals,"away":match.away_goals} if (live or final) else None,"leaders":leaders,"response":response}
 
 @router.get("/mine")
 async def my_predictions(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
