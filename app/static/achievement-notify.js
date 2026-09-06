@@ -18,4 +18,5 @@ if(!document.querySelector('script[data-gts-tournament-branding]')){const s=docu
 if(!document.querySelector('script[data-gts-league-card-actions]')){const s=document.createElement('script');s.src='/static/league-card-actions.js?v=4';s.dataset.gtsLeagueCardActions='1';document.body.appendChild(s)}
 if(!document.querySelector('script[data-gts-league-color-balance]')){const s=document.createElement('script');s.src='/static/league-color-balance.js?v=1';s.dataset.gtsLeagueColorBalance='1';document.body.appendChild(s)}
 if(!document.querySelector('script[data-gts-tournament-ui-theme]')){const s=document.createElement('script');s.src='/static/tournament-ui-theme.js?v=4';s.dataset.gtsTournamentUiTheme='1';document.body.appendChild(s)}
+if(!document.querySelector('script[data-gts-tournament-component-theme]')){const s=document.createElement('script');s.src='/static/tournament-component-theme.js?v=1';s.dataset.gtsTournamentComponentTheme='1';document.body.appendChild(s)}
 })();
