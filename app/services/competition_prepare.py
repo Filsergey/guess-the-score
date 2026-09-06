@@ -233,7 +233,7 @@ async def _background_fill_missing_logos(team_ids: list[int]) -> None:
     if not team_ids:
         return
 
-    for delay in (3, 45, 180, 600):
+    for delay in (3, 30, 120, 600, 1800):
         await asyncio.sleep(delay)
         async with SessionLocal() as session:
             teams = (
@@ -249,7 +249,7 @@ async def _background_fill_missing_logos(team_ids: list[int]) -> None:
             if not pending:
                 return
 
-            # API-Football is a cheap metadata fallback when configured.
+            # Try API-Football first when configured.
             try:
                 await _hydrate_missing_logos_from_api_football(session, pending)
             except Exception:
@@ -263,7 +263,7 @@ async def _background_fill_missing_logos(team_ids: list[int]) -> None:
             if not pending:
                 return
 
-            # Retry SStats later as well: its team metadata can appear after the fixture feed.
+            # Retry SStats too: metadata can become available later than fixtures.
             provider = SStatsProvider()
             anonymous = not bool(provider.settings.sstats_api_key)
             for index, team in enumerate(pending):
@@ -301,8 +301,9 @@ async def prepare_sstats_competition(
 ):
     """Prepare match/team/player data before a user league is created.
 
-    Missing team crests are non-blocking: the league may be created once the actual
-    football data is ready, while logo recovery continues in the background.
+    Matches and teams are mandatory. Team metadata/logos are attempted in foreground,
+    but missing crests never block creation and are retried in background. Player
+    rosters are still mass-loaded before readiness is returned.
     """
     sync = await _sync_matches_with_cooldown(session, league_id, year, league_name)
     tournament_id = sync.get("tournament_id")
@@ -334,11 +335,17 @@ async def prepare_sstats_competition(
         raise RuntimeError("Не удалось определить команды турнира")
 
     provider = SStatsProvider()
+    metadata_error = None
     try:
         await _hydrate_team_metadata_bulk(session, provider, teams)
     except Exception as exc:
+        # Team names/provider IDs already came from the fixture feed, so a metadata
+        # outage (normally crests/codes/country) must not prevent league creation.
+        metadata_error = _http_label(exc)
         await session.rollback()
-        raise RuntimeError(f"Не удалось загрузить данные команд: {_http_label(exc)}") from exc
+        teams = (
+            await session.execute(select(Team).where(Team.id.in_(team_db_ids)).order_by(Team.name))
+        ).scalars().all()
 
     missing_logo_teams = [
         team
@@ -348,8 +355,7 @@ async def prepare_sstats_competition(
     if missing_logo_teams:
         _schedule_missing_logo_background([int(team.id) for team in missing_logo_teams])
 
-    # With a personal key we can work quickly. Without it SStats documents a 30 req/min
-    # per-IP anonymous limit, so keep enough headroom for live updates.
+    # With a personal key we can work quickly. Without it keep headroom for live updates.
     anonymous = not bool(provider.settings.sstats_api_key)
     pace_seconds = 2.6 if anonymous else 0.12
     player_results = []
@@ -417,6 +423,7 @@ async def prepare_sstats_competition(
         "team_logos_ready": len(teams) - len(missing_logo_teams),
         "team_logos_pending": [team.name for team in missing_logo_teams],
         "logo_background_scheduled": bool(missing_logo_teams),
+        "team_metadata_error": metadata_error,
         "players_ready": sum(player_counts.values()),
         "teams_with_players": sum(1 for value in player_counts.values() if value > 0),
         "player_sync": player_results,
