@@ -14,15 +14,16 @@ def _streak(values,needle):
  for v in values:cur=cur+1 if v==needle else 0;best=max(best,cur)
  return best
 def _round_key(m):return (m.round_name or '').strip() or 'Без тура'
+def _is_completed(m):return m.status_short in FINAL_MATCH_STATUSES and m.home_goals is not None and m.away_goals is not None
 @router.get('/{league_id}/achievements')
 async def achievements(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
  league=await db.get(UserLeague,league_id)
  if league is None:raise HTTPException(404,'League not found')
  await _membership(league_id,user,db);members=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id))).all()
- matches=(await db.execute(select(Match).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season,Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),Match.home_goals.is_not(None),Match.away_goals.is_not(None)).order_by(Match.kickoff_at))).scalars().all();ids=[m.id for m in matches]
+ all_matches=(await db.execute(select(Match).where(Match.provider==league.tournament_provider,Match.season==league.tournament_season).order_by(Match.kickoff_at))).scalars().all();matches=[m for m in all_matches if _is_completed(m)];ids=[m.id for m in matches]
  all_preds=(await db.execute(select(Prediction).where(Prediction.match_id.in_(ids)))).scalars().all() if ids else [];preds={(p.user_id,p.match_id):p for p in all_preds};oracle_rows=(await db.execute(select(OraclePrediction).where(OraclePrediction.match_id.in_(ids)))).scalars().all() if ids and league.include_oracle else [];oracle={p.match_id:p for p in oracle_rows}
- rounds=defaultdict(list)
- for m in matches:rounds[_round_key(m)].append(m)
+ rounds_all=defaultdict(list)
+ for m in all_matches:rounds_all[_round_key(m)].append(m)
  rows=[]
  for _,u in members:
   eligible=[m for m in matches if m.kickoff_at>=u.registered_at];points=[];exacts=outcomes=oracle_wins=unique_exacts=0
@@ -46,9 +47,9 @@ async def achievements(league_id:int,user:User=Depends(get_current_user),db:Asyn
   if unique_exacts:add('only_one','Один такой','💎',unique_exacts,3 if unique_exacts>=5 else 2 if unique_exacts>=3 else 1)
   rows.append({'user_id':u.id,'display_name':u.display_name,'avatar_url':u.avatar_url,'is_me':u.id==user.id,'exacts':exacts,'outcomes':outcomes,'predictions':len(points),'best_exact_streak':exact_streak,'best_hit_streak':best_hit,'oracle_wins':oracle_wins,'unique_exacts':unique_exacts,'achievements':badges,'round_awards':[]})
  by_user={r['user_id']:r for r in rows};round_awards=[]
- for round_name,rmatches in rounds.items():
-  if not rmatches:continue
-  scores=[]
+ for round_name,all_round_matches in rounds_all.items():
+  if not all_round_matches or not all(_is_completed(m) for m in all_round_matches):continue
+  rmatches=[m for m in all_round_matches if _is_completed(m)];scores=[]
   for _,u in members:
    eligible=[m for m in rmatches if m.kickoff_at>=u.registered_at];vals=[]
    for m in eligible:
@@ -62,7 +63,7 @@ async def achievements(league_id:int,user:User=Depends(get_current_user),db:Asyn
   for x in scores:
    if x['eligible']>0 and x['predictions']==x['eligible'] and x['exacts']==x['eligible']:
     awards.append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','user_id':x['user_id'],'display_name':x['display_name'],'value':x['exacts']});by_user[x['user_id']]['round_awards'].append({'code':'perfect_round','title':'Идеальный тур','icon':'👑','round':round_name,'value':x['exacts']})
-  round_awards.append({'round':round_name,'match_count':len(rmatches),'awards':awards,'ranking':sorted(scores,key=lambda x:(-x['points'],-x['exacts'],-x['hits'],x['display_name'].casefold()))})
+  round_awards.append({'round':round_name,'complete':True,'match_count':len(rmatches),'awards':awards,'ranking':sorted(scores,key=lambda x:(-x['points'],-x['exacts'],-x['hits'],x['display_name'].casefold()))})
  for r in rows:
   wins=sum(a['code']=='round_winner' for a in r['round_awards']);perfect=sum(a['code']=='perfect_round' for a in r['round_awards'])
   if wins:r['achievements'].append({'code':'round_champion','title':'Король тура','icon':'🏆','value':wins,'level':3 if wins>=5 else 2 if wins>=3 else 1,'subtitle':'побед в турах'})
