@@ -16,7 +16,11 @@ const state={
  },
  async login(){
   if(this.token){try{this.me=await this.api('/api/auth/me');return this.me}catch(e){if(e.status!==401)throw e;this.token=''}}
-  if(!tg?.initData)throw new Error('Открой приложение через кнопку Telegram-бота');
+  if(!tg?.initData){
+   let status={};try{const r=await fetch('/api/auth/web/status',{cache:'no-store'});status=await r.json()}catch{}
+   if(status?.configured){location.assign(status.login_url||'/api/auth/web/start');return new Promise(()=>{})}
+   throw new Error('Вход через браузер пока не настроен. Открой приложение через Telegram.')
+  }
   const r=await fetch('/api/auth/telegram',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({init_data:tg.initData})});let d={};try{d=await r.json()}catch{}
   if(!r.ok)throw new Error(d.detail||'Ошибка входа');this.token=d.access_token;this.me=d.user||await this.api('/api/auth/me');return this.me
  },
