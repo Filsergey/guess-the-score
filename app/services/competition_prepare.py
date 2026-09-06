@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Match, Player, Team, Tournament
 from app.players import sync_sstats_team_players
+from app.providers.api_football import APIFootballProvider
 from app.providers.sstats import SStatsProvider
 from app.services.sstats_sync import SSTATS_PROVIDER, sync_sstats_competition
 
@@ -109,6 +110,81 @@ def _apply_team_row(team: Team, row: dict) -> None:
         team.logo_url = str(logo)
 
 
+def _normalize_team_name(value: str | None) -> str:
+    text = str(value or "").lower()
+    for token in ("fc", "cf", "afc", "ac", "ssc", "us", "calcio"):
+        text = text.replace(token, " ")
+    return " ".join(
+        text.replace(".", " ").replace("-", " ").replace("_", " ").split()
+    )
+
+
+def _pick_api_football_team(payload: dict, expected_name: str) -> dict:
+    rows = payload.get("response") or []
+    if not isinstance(rows, list) or not rows:
+        return {}
+    expected = _normalize_team_name(expected_name)
+    for row in rows:
+        team = row.get("team") if isinstance(row, dict) else None
+        if not isinstance(team, dict):
+            continue
+        candidate = _normalize_team_name(str(team.get("name") or ""))
+        if candidate == expected:
+            return team
+    if len(rows) == 1 and isinstance(rows[0], dict):
+        team = rows[0].get("team")
+        return team if isinstance(team, dict) else {}
+    return {}
+
+
+async def _hydrate_missing_logos_from_api_football(
+    session: AsyncSession,
+    teams: list[Team],
+) -> dict:
+    missing = [
+        team
+        for team in teams
+        if not team.logo_url or not str(team.logo_url).startswith(("http://", "https://"))
+    ]
+    if not missing:
+        return {"requested": 0, "updated": 0, "configured": True, "failed": []}
+
+    provider = APIFootballProvider()
+    if not provider.settings.api_football_key:
+        return {
+            "requested": len(missing),
+            "updated": 0,
+            "configured": False,
+            "failed": [team.name for team in missing],
+        }
+
+    updated = 0
+    failed = []
+    for team in missing:
+        search_name = team.source_name or team.name
+        try:
+            payload = await provider.search_teams(search_name)
+            api_team = _pick_api_football_team(payload, search_name)
+            logo = api_team.get("logo") if api_team else None
+            if isinstance(logo, str) and logo.startswith(("http://", "https://")):
+                team.logo_url = logo
+                code = api_team.get("code")
+                if code and not team.code:
+                    team.code = str(code)[:20]
+                updated += 1
+            else:
+                failed.append(team.name)
+        except Exception:
+            failed.append(team.name)
+    await session.commit()
+    return {
+        "requested": len(missing),
+        "updated": updated,
+        "configured": True,
+        "failed": failed,
+    }
+
+
 async def _hydrate_team_metadata_bulk(
     session: AsyncSession,
     provider: SStatsProvider,
@@ -195,6 +271,7 @@ async def prepare_sstats_competition(
         await session.rollback()
         raise RuntimeError(f"Не удалось загрузить данные команд: {_http_label(exc)}") from exc
 
+    logo_fallback = await _hydrate_missing_logos_from_api_football(session, teams)
     missing_logos = [
         team.name
         for team in teams
@@ -203,7 +280,12 @@ async def prepare_sstats_competition(
     if missing_logos:
         preview = ", ".join(missing_logos[:6])
         suffix = "…" if len(missing_logos) > 6 else ""
-        raise RuntimeError(f"Не загрузились логотипы команд: {preview}{suffix}")
+        extra = (
+            " API_FOOTBALL_KEY не настроен."
+            if not logo_fallback.get("configured")
+            else " API-Football тоже не нашёл логотип."
+        )
+        raise RuntimeError(f"Не загрузились логотипы команд: {preview}{suffix}.{extra}")
 
     # With a personal key we can work quickly. Without it SStats documents a 30 req/min
     # per-IP anonymous limit, so keep enough headroom for live updates.
@@ -264,7 +346,6 @@ async def prepare_sstats_competition(
     tournament = await session.get(Tournament, int(tournament_id))
     if tournament:
         tournament.logo_url = f"/api/leagues/tournament-logo/{league_id}"
-        tournament.updated_at = getattr(tournament, "updated_at", None) or None if hasattr(tournament, "updated_at") else None
         await session.commit()
 
     return {
@@ -276,6 +357,7 @@ async def prepare_sstats_competition(
         "players_ready": sum(player_counts.values()),
         "teams_with_players": sum(1 for value in player_counts.values() if value > 0),
         "player_sync": player_results,
+        "logo_fallback": logo_fallback,
         "sstats_api_key_configured": not anonymous,
         "prepared_at": datetime.now(timezone.utc).isoformat(),
     }
