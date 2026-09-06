@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Team
+from app.providers.sstats import SStatsProvider
 from app.providers.uefa import UEFAProvider
 
 router = APIRouter()
@@ -41,6 +42,30 @@ async def _restore_uefa_logo(team: Team, db: AsyncSession) -> str | None:
             return url
     return None
 
+async def _restore_sstats_logo(team: Team, db: AsyncSession) -> str | None:
+    """Load a logo directly from SStats for Premier League and other SStats competitions."""
+    if team.provider!='sstats' or not team.provider_id:
+        return None
+    try:
+        payload=await SStatsProvider().get_team(team.provider_id)
+    except Exception:
+        return None
+    rows=payload.get('data') or payload.get('response') or payload
+    if isinstance(rows,list):
+        row=rows[0] if rows else {}
+    elif isinstance(rows,dict):
+        row=rows.get('team') if isinstance(rows.get('team'),dict) else rows
+    else:
+        row={}
+    url=row.get('logoUrl') or row.get('LogoUrl') or row.get('logo') or row.get('Logo')
+    if isinstance(url,dict):
+        url=url.get('url') or url.get('Url')
+    if url and str(url).startswith(('http://','https://')):
+        team.logo_url=str(url)
+        await db.commit()
+        return team.logo_url
+    return None
+
 @router.get('/api/team-logo/db/{team_id}', include_in_schema=False)
 async def team_logo_by_db_id(team_id: int, db: AsyncSession = Depends(get_db)):
     team = await db.get(Team, team_id)
@@ -48,14 +73,16 @@ async def team_logo_by_db_id(team_id: int, db: AsyncSession = Depends(get_db)):
         raise HTTPException(404, 'Team not found')
     url=team.logo_url if team.logo_url and team.logo_url.startswith(('http://','https://')) else None
     if not url:
+        url=await _restore_sstats_logo(team,db)
+    if not url:
         url=await _restore_uefa_logo(team,db)
     if not url:
         raise HTTPException(404, 'Team logo not loaded yet')
     try:
         return await _proxy(url)
     except HTTPException:
-        # UEFA occasionally changes a stored image URL. Refresh it once from standings.
-        fresh=await _restore_uefa_logo(team,db)
+        # Refresh a stale provider image URL once.
+        fresh=await _restore_sstats_logo(team,db) or await _restore_uefa_logo(team,db)
         if fresh and fresh!=url:
             return await _proxy(fresh)
         raise
