@@ -44,12 +44,20 @@ def _lineup_player(row: dict) -> dict:
     }
 
 
-def normalize_full_match(full: dict | None, home_team_id: int | None, away_team_id: int | None) -> dict[str, Any]:
-    """Return only stable SStats full-match fields used by the client.
+def _live_snapshot(full: dict) -> dict:
+    game = _pick(full, "game", "Game")
+    game = game if isinstance(game, dict) else full
+    return {
+        "status": _pick(game, "status", "Status"),
+        "status_name": _pick(game, "statusName", "StatusName", "statusText", "StatusText"),
+        "elapsed": _pick(game, "elapsed", "Elapsed", "minute", "Minute"),
+        "home_goals": _pick(game, "scoreHome", "ScoreHome", "homeResult", "HomeResult"),
+        "away_goals": _pick(game, "scoreAway", "ScoreAway", "awayResult", "AwayResult"),
+    }
 
-    SStats /Games/{id} wraps the actual match in ApiSaGameFull and provides events,
-    lineup metadata and lineupPlayers alongside the game object.
-    """
+
+def normalize_full_match(full: dict | None, home_team_id: int | None, away_team_id: int | None) -> dict[str, Any]:
+    """Return stable SStats full-match fields used by the client."""
     full = full if isinstance(full, dict) else {}
     lineup = _pick(full, "lineups", "Lineups") or {}
     events = [_event(x) for x in (_pick(full, "events", "Events") or []) if isinstance(x, dict)]
@@ -66,6 +74,7 @@ def normalize_full_match(full: dict | None, home_team_id: int | None, away_team_
 
     venue = _pick(full, "venue", "Venue") or {}
     return {
+        "live_raw": _live_snapshot(full),
         "referee": _pick(full, "refereeName", "RefereeName"),
         "venue_full": {
             "id": _pick(venue, "id", "Id"),
