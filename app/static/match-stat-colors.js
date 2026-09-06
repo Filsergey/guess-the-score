@@ -26,22 +26,7 @@ html[data-gts-tournament-theme='laliga'] .md-stat-legend,html[data-gts-tournamen
 `;
 document.head.appendChild(style);
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-let predictions=null,predictionsPromise=null;
-async function getPredictions(){
- if(predictions)return predictions;
- if(predictionsPromise)return predictionsPromise;
- predictionsPromise=(async()=>{try{const d=await window.GTS?.api?.('/api/predictions/mine');const map=new Map();for(const p of d?.response||[])map.set(Number(p.match_id),p);predictions=map;return map}catch(e){console.warn('match prediction badge',e);return new Map()}finally{predictionsPromise=null}})();
- return predictionsPromise;
-}
-async function decoratePrediction(root){
- if(!root||root.querySelector('.md-my-prediction'))return;
- const score=root.querySelector('.match-detail-score');if(!score)return;
- const id=Number(root.dataset.matchDetailId),map=await getPredictions();
- if(!root.isConnected||Number(root.dataset.matchDetailId)!==id)return;
- const p=map.get(id);if(!p)return;
- const el=document.createElement('div');el.className='md-my-prediction';el.innerHTML=`Мой прогноз <span>${esc(p.home_score)}:${esc(p.away_score)}</span>`;
- score.appendChild(el);
-}
+function cleanupPredictionDuplicates(root){const all=[...(root?.querySelectorAll('.md-my-prediction')||[])];all.slice(1).forEach(x=>x.remove())}
 function decorateStats(root){
  const body=root?.querySelector('[data-md-body="stats"]');
  if(!root||!body||body.dataset.loaded!=='1'||body.querySelector('.md-stat-legend'))return;
@@ -51,10 +36,9 @@ function decorateStats(root){
  legend.innerHTML=`<div class="md-stat-legend-side"><span class="md-stat-dot home"></span><span class="md-stat-legend-name">${esc(match.home?.name||'Хозяева')}</span></div><div class="md-stat-legend-side"><span class="md-stat-legend-name">${esc(match.away?.name||'Гости')}</span><span class="md-stat-dot away"></span></div>`;
  body.prepend(legend);
 }
-function decorate(){const root=document.querySelector('#sheetContent [data-match-detail-id]');if(!root)return;decorateStats(root);decoratePrediction(root)}
+function decorate(){const root=document.querySelector('#sheetContent [data-match-detail-id]');if(!root)return;cleanupPredictionDuplicates(root);decorateStats(root)}
 new MutationObserver(()=>queueMicrotask(decorate)).observe(document.getElementById('sheetContent')||document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['data-loaded']});
 document.addEventListener('click',e=>{if(e.target?.closest?.('[data-md-toggle="stats"]'))setTimeout(decorate,60)},true);
-document.addEventListener('gts:league-change',()=>{predictions=null});
 document.addEventListener('gts:matches-updated',()=>setTimeout(decorate,50));
-setInterval(decorate,700);
+setInterval(decorate,900);
 })();
