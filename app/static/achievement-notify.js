@@ -12,4 +12,5 @@ document.addEventListener('gts:ready',()=>setTimeout(baseline,500));
 document.addEventListener('gts:league-change',()=>{ready=false;seen.clear();queue=[];leagueId=null;setTimeout(baseline,350)});
 document.addEventListener('gts:match-finished',()=>{setTimeout(check,2500);setTimeout(check,6500)});
 setTimeout(baseline,1200);
+if(!document.querySelector('script[data-gts-popular-tournaments]')){const s=document.createElement('script');s.src='/static/popular-tournaments.js?v=3';s.dataset.gtsPopularTournaments='1';document.body.appendChild(s)}
 })();
