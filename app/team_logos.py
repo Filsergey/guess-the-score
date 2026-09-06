@@ -86,7 +86,13 @@ async def tournament_logo_by_db_id(tournament_id: int, db: AsyncSession = Depend
     tournament = await db.get(Tournament, tournament_id)
     if not tournament:
         raise HTTPException(404, 'Tournament not found')
+
     url = tournament.logo_url if tournament.logo_url and tournament.logo_url.startswith(('http://', 'https://')) else None
+    if not url and tournament.provider == 'sstats' and tournament.provider_id:
+        # The catalog stores a same-origin SStats logo route in logo_url. Resolve the
+        # actual upstream crest here, so browsers/PWAs never depend on third-party image URLs.
+        from app.league_catalog import _sstats_tournament_logo_url
+        url = await _sstats_tournament_logo_url(int(tournament.provider_id))
     if not url:
         raise HTTPException(404, 'Tournament logo not loaded yet')
     return await _proxy(url)
