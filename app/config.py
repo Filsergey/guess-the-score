@@ -6,6 +6,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/guess_the_score"
     sstats_api_key: str = ""
+    api_football_key: str = ""
+    api_football_base_url: str = "https://v3.football.api-sports.io"
     admin_sync_token: str = ""
     telegram_bot_token: str = ""
     jwt_secret: str = ""
