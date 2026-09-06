@@ -26,7 +26,7 @@ async function focusLeague(id){
  await window.loadLeagues?.();
  const found=leagues().find(x=>Number(x.id)===Number(id));
  if(found)window.chooseLeague?.(found.id);
- window.showLeagues?.();
+ if(typeof window.showLeagues==='function')window.showLeagues();else window.showView?.('leagues');
 }
 
 async function acceptInvite(code){
