@@ -3,9 +3,10 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&
 const norm=s=>String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[._–—-]+/g,' ').replace(/[^a-z0-9а-яё ]+/gi,' ').replace(/\s+/g,' ').trim();
 const bad=n=>/(women|woman|femin|u19|u20|u21|u23|youth|junior|reserve|qualification|qualifier|qualifying|playoff|play off)/i.test(n);
 
-// Только эти чемпионаты доступны при создании пользовательской лиги.
+// Только эти турниры доступны при создании пользовательской лиги.
 // Порядок здесь = порядок в выпадающем списке.
 const SPECS=[
+ {label:'Лига чемпионов',aliases:['uefa champions league','champions league'],countries:['europe','international','uefa','world'],allowNoCountry:true},
  {label:'АПЛ',aliases:['premier league','english premier league'],countries:['england','united kingdom','great britain']},
  {label:'Ла Лига',aliases:['la liga','laliga','primera division'],countries:['spain']},
  {label:'Бундеслига',aliases:['bundesliga'],countries:['germany']},
@@ -18,14 +19,14 @@ const SPECS=[
  {label:'РПЛ',aliases:['russian premier league','premier liga','premier league','rpl'],countries:['russia','russian federation']},
 ];
 
-function countryMatches(country,spec){const c=norm(country);return spec.countries.some(x=>c===norm(x)||c.includes(norm(x)))}
+function countryMatches(country,spec){const c=norm(country);if(!c&&spec.allowNoCountry)return true;return spec.countries.some(x=>c===norm(x)||c.includes(norm(x)))}
 function aliasScore(name,aliases){let best=-1;for(const raw of aliases){const a=norm(raw);if(name===a)best=Math.max(best,60);else if(name.startsWith(a+' ')||name.endsWith(' '+a))best=Math.max(best,45);else if(name.includes(a))best=Math.max(best,30)}return best}
 function candidateScore(item,spec){
  const name=norm(item.name),country=norm(item.country);
  if(!name||bad(name))return -1;
  const a=aliasScore(name,spec.aliases);if(a<0)return -1;
- // Страны обязательны: это не даёт перепутать английскую/русскую Premier League
- // и итальянскую/бразильскую Serie A.
+ // Для внутренних чемпионатов страна обязательна: это не даёт перепутать
+ // английскую/русскую Premier League и итальянскую/бразильскую Serie A.
  if(!countryMatches(country,spec))return -1;
  let score=a+50;
  if(item.seasons?.length)score+=Math.min(5,item.seasons.length);
@@ -48,15 +49,15 @@ function pickAllowed(items){
 }
 function option(x){return `<option value="${Number(x.league_id)}">${esc(x._displayLabel)}</option>`}
 async function openCreateLeagueTopOnly(){
- window.openSheet?.('<div class="sheet-title">Создать лигу</div><div class="sheet-note">Загружаем чемпионаты…</div><button class="close" onclick="closeSheet()">Закрыть</button>');
+ window.openSheet?.('<div class="sheet-title">Создать лигу</div><div class="sheet-note">Загружаем турниры…</div><button class="close" onclick="closeSheet()">Закрыть</button>');
  try{
   const d=await window.GTS.api('/api/leagues/catalog'),allowed=pickAllowed(d.response||[]);
-  let opts='<option value="">Выбери чемпионат</option>'+allowed.map(option).join('');
+  let opts='<option value="">Выбери турнир</option>'+allowed.map(option).join('');
   const missing=SPECS.length-allowed.length;
   const note=missing>0
-   ?`Доступны только выбранные топ-чемпионаты. Сейчас SStats нашёл ${allowed.length} из ${SPECS.length}.`
-   :'Доступны только 10 выбранных топ-чемпионатов. После выбора укажи сезон.';
-  window.openSheet?.(`<div class="sheet-title">Создать лигу</div><input id="newLeagueName" class="field" placeholder="Название новой лиги"><select id="newLeagueTournament" class="field" onchange="onCreateTournamentChange()">${opts}</select><select id="newLeagueSeason" class="field" disabled><option value="">Сначала выбери чемпионат</option></select><div class="sheet-note">${esc(note)}</div><button class="save" id="createLeagueBtn" onclick="createLeague()" ${allowed.length?'':'disabled'}>Создать лигу</button><button class="close" onclick="closeSheet()">Закрыть</button>`);
+   ?`Доступны только выбранные турниры. Сейчас SStats нашёл ${allowed.length} из ${SPECS.length}.`
+   :'Доступны Лига чемпионов и 10 выбранных топ-чемпионатов. После выбора укажи сезон.';
+  window.openSheet?.(`<div class="sheet-title">Создать лигу</div><input id="newLeagueName" class="field" placeholder="Название новой лиги"><select id="newLeagueTournament" class="field" onchange="onCreateTournamentChange()">${opts}</select><select id="newLeagueSeason" class="field" disabled><option value="">Сначала выбери турнир</option></select><div class="sheet-note">${esc(note)}</div><button class="save" id="createLeagueBtn" onclick="createLeague()" ${allowed.length?'':'disabled'}>Создать лигу</button><button class="close" onclick="closeSheet()">Закрыть</button>`);
  }catch(e){window.toast?.(e.message||'Не удалось загрузить каталог SStats')}
 }
 setTimeout(()=>{window.openCreateLeague=openCreateLeagueTopOnly},0);
