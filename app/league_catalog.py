@@ -1,6 +1,4 @@
-import asyncio
 from datetime import datetime, timezone
-from time import monotonic
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -31,26 +29,6 @@ TOP_TOURNAMENTS = (
 )
 ALLOWED_TOURNAMENTS = {item["league_id"]: item for item in TOP_TOURNAMENTS}
 TOURNAMENT_LOGO_IDS = set(ALLOWED_TOURNAMENTS)
-
-# SStats remains the only external logo source. These are local, generated fallbacks
-# so a temporarily missing SStats badge never turns every league icon into the same ball.
-TOURNAMENT_FALLBACKS = {
-    2: ("UCL", "#07182e", "#20a7ff"),
-    39: ("PL", "#37003c", "#04f5ff"),
-    140: ("LL", "#171717", "#ff4655"),
-    78: ("BL", "#ffffff", "#d20515"),
-    135: ("A", "#ffffff", "#0068ff"),
-    61: ("L1", "#071a38", "#ee1747"),
-    88: ("ERE", "#ffffff", "#e31b23"),
-    71: ("BR", "#0b6b3a", "#ffd400"),
-    94: ("PT", "#0b6b3a", "#d71920"),
-    262: ("MX", "#0b6b3a", "#d71920"),
-    235: ("RPL", "#143d8d", "#e53935"),
-}
-_LOGO_CACHE: dict[int, str | None] = {}
-_LOGO_CACHE_AT = 0.0
-_LOGO_CACHE_TTL = 600.0
-_LOGO_CACHE_LOCK = asyncio.Lock()
 
 
 class CatalogSyncBody(BaseModel):
@@ -119,81 +97,49 @@ def _logo_value(row: dict):
     return str(logo) if logo and str(logo).startswith(("http://", "https://")) else None
 
 
-def _fallback_tournament_logo_response(provider_id: int | None) -> Response:
-    code, background, accent = TOURNAMENT_FALLBACKS.get(provider_id, ("T", "#10263b", "#24a4ff"))
-    font_size = 25 if len(code) == 1 else 19 if len(code) == 2 else 14
-    svg = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
-<rect width="96" height="96" rx="24" fill="{background}"/>
-<circle cx="48" cy="48" r="38" fill="none" stroke="{accent}" stroke-width="5"/>
-<circle cx="48" cy="48" r="30" fill="none" stroke="{accent}" stroke-opacity=".28" stroke-width="2"/>
-<path d="M25 65 C39 76 57 76 71 65" fill="none" stroke="{accent}" stroke-width="4" stroke-linecap="round"/>
-<text x="48" y="55" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-size="{font_size}" font-weight="800" fill="{accent}">{code}</text>
-</svg>'''
-    return Response(
-        content=svg,
-        media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=604800, stale-while-revalidate=2592000"},
-    )
-
-
-async def _load_sstats_tournament_logo_cache() -> None:
-    global _LOGO_CACHE_AT
-    now = monotonic()
-    if _LOGO_CACHE and now - _LOGO_CACHE_AT < _LOGO_CACHE_TTL:
-        return
-    async with _LOGO_CACHE_LOCK:
-        now = monotonic()
-        if _LOGO_CACHE and now - _LOGO_CACHE_AT < _LOGO_CACHE_TTL:
-            return
-        logos = {provider_id: None for provider_id in TOURNAMENT_LOGO_IDS}
-        try:
-            payload = await SStatsProvider().get_leagues()
-            rows = payload.get("data") or payload.get("response") or []
-            if isinstance(rows, dict):
-                rows = [rows]
-            if isinstance(rows, list):
-                for row in rows:
-                    if not isinstance(row, dict):
-                        continue
-                    raw_id = row.get("id") or row.get("Id") or row.get("leagueId") or row.get("LeagueId")
-                    try:
-                        provider_id = int(raw_id)
-                    except (TypeError, ValueError):
-                        continue
-                    if provider_id in logos:
-                        logos[provider_id] = _logo_value(row)
-        except Exception:
-            pass
-        _LOGO_CACHE.clear()
-        _LOGO_CACHE.update(logos)
-        _LOGO_CACHE_AT = monotonic()
-
-
 async def _sstats_tournament_logo_url(provider_id: int) -> str | None:
-    await _load_sstats_tournament_logo_cache()
-    return _LOGO_CACHE.get(int(provider_id))
+    try:
+        payload = await SStatsProvider().get_leagues()
+    except Exception:
+        return None
+    rows = payload.get("data") or payload.get("response") or []
+    if isinstance(rows, dict):
+        rows = [rows]
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_id = row.get("id") or row.get("Id") or row.get("leagueId") or row.get("LeagueId")
+        try:
+            if raw_id is None or int(raw_id) != int(provider_id):
+                continue
+        except (TypeError, ValueError):
+            continue
+        return _logo_value(row)
+    return None
 
 
 @router.get("/tournament-logo/{provider_id}")
 async def tournament_logo(provider_id: int):
-    """Serve the SStats tournament badge, with a local non-network fallback."""
+    """Proxy the tournament badge discovered through SStats only."""
     if provider_id not in TOURNAMENT_LOGO_IDS:
         raise HTTPException(404, "Tournament logo not configured")
     url = await _sstats_tournament_logo_url(provider_id)
-    if url:
-        try:
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                upstream = await client.get(url, headers={"User-Agent": "guess-the-score/1.0"})
-                upstream.raise_for_status()
-            content_type = upstream.headers.get("content-type") or "image/png"
-            return Response(
-                content=upstream.content,
-                media_type=content_type.split(";", 1)[0],
-                headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
-            )
-        except Exception:
-            pass
-    return _fallback_tournament_logo_response(provider_id)
+    if not url:
+        raise HTTPException(404, "Tournament logo not loaded yet")
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            upstream = await client.get(url, headers={"User-Agent": "guess-the-score/1.0"})
+            upstream.raise_for_status()
+    except Exception as exc:
+        raise HTTPException(502, f"Tournament logo unavailable: {type(exc).__name__}") from exc
+    content_type = upstream.headers.get("content-type") or "image/png"
+    return Response(
+        content=upstream.content,
+        media_type=content_type.split(";", 1)[0],
+        headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"},
+    )
 
 
 @router.get("/catalog")
@@ -214,7 +160,7 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
 @router.get("/catalog/logo-check")
 async def tournament_logo_check():
     return {
-        "source": "sstats-with-local-fallback",
+        "source": "sstats",
         "count": len(TOP_TOURNAMENTS),
         "matches": [
             {
@@ -266,7 +212,7 @@ async def sync_catalog_tournament(
         raise HTTPException(502, "Турнир не найден после подготовки")
     tournament.name = configured["name"]
     tournament.country = configured["country"]
-    tournament.logo_url = await _sstats_tournament_logo_url(body.league_id)
+    tournament.logo_url = f"/api/leagues/tournament-logo/{body.league_id}"
     await db.commit()
 
     return {

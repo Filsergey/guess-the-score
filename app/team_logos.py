@@ -87,32 +87,13 @@ async def tournament_logo_by_db_id(tournament_id: int, db: AsyncSession = Depend
     if not tournament:
         raise HTTPException(404, 'Tournament not found')
 
-    from app.league_catalog import _fallback_tournament_logo_response, _sstats_tournament_logo_url
-
-    try:
-        provider_id = int(tournament.provider_id) if tournament.provider_id is not None else None
-    except (TypeError, ValueError):
-        provider_id = None
-
-    # Old rows can contain the same-origin catalog route in logo_url. It is not an
-    # upstream image URL, so ignore it and resolve the actual SStats badge once.
     url = tournament.logo_url if tournament.logo_url and tournament.logo_url.startswith(('http://', 'https://')) else None
-    if url:
-        try:
-            return await _proxy(url)
-        except HTTPException:
-            url = None
-
-    if not url and tournament.provider == 'sstats' and provider_id:
-        fresh = await _sstats_tournament_logo_url(provider_id)
-        if fresh:
-            tournament.logo_url = fresh
+    if not url and tournament.provider == 'sstats' and tournament.provider_id:
+        from app.league_catalog import _sstats_tournament_logo_url
+        url = await _sstats_tournament_logo_url(int(tournament.provider_id))
+        if url:
+            tournament.logo_url = url
             await db.commit()
-            try:
-                return await _proxy(fresh)
-            except HTTPException:
-                pass
-
-    # No extra football API is used here. If SStats has no badge (or it is
-    # temporarily unavailable), serve a stable local tournament-specific SVG.
-    return _fallback_tournament_logo_response(provider_id)
+    if not url:
+        raise HTTPException(404, 'Tournament logo not loaded yet')
+    return await _proxy(url)
