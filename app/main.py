@@ -53,12 +53,12 @@ async def lifespan(_:FastAPI):
    if task:task.cancel()
    if task:
     with suppress(asyncio.CancelledError):await task
-app=FastAPI(title=settings.app_name,version='0.25.0',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.26.0',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
 async def mini_app():
- html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=2"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=2"></script><script src="/static/match-detail.js?v=2"></script><script src="/static/match-feed.js?v=4"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+ html=(STATIC_DIR/'index.html').read_text(encoding='utf-8');scripts='<script src="/static/core-v2.js?v=2"></script><script src="/static/app-shell.js?v=2"></script><script src="/static/oracle-leaderboard.js?v=1"></script><script src="/static/prediction-history.js?v=2"></script><script src="/static/leaderboard-me.js?v=2"></script><script src="/static/tournament-prediction.js?v=8"></script><script src="/static/prediction-sheet.js?v=3"></script><script src="/static/tournament-save-guard.js?v=1"></script><script src="/static/match-participants.js?v=2"></script><script src="/static/match-detail.js?v=3"></script><script src="/static/match-feed.js?v=4"></script><script src="/static/prediction-state.js?v=3"></script>';return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
  if token!=settings.admin_sync_token:raise HTTPException(401,'Invalid admin token')
@@ -125,7 +125,7 @@ async def match_rich_detail(match_id:int,db:AsyncSession=Depends(get_db)):
  try:gl=_first_item(await p.get_glicko(m.provider_id))
  except Exception as e:errors.append(f'glicko:{type(e).__name__}')
  d=_merge(qd,gd) if (qd or gd) else {}
- rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'lineups':{'home':{'formation':None,'starting':[],'bench':[]},'away':{'formation':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None}
+ rich=normalize_full_match(full,h.provider_id,a.provider_id) if full else {'events':[],'lineups':{'home':{'formation':None,'starting':[],'bench':[]},'away':{'formation':None,'starting':[],'bench':[]}},'referee':None,'venue_full':None,'live_raw':{}}
  if not d and not gl and not full:return {**base,'details_available':False,'details_source':None,'details_errors':errors,'details':None}
  details=serialize_sstats_details(d,gl);details.update(rich)
  if rich.get('venue_full') and not details.get('venue',{}).get('name'):details['venue']=rich['venue_full']
