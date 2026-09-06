@@ -39,18 +39,33 @@ def _norm_code(value:str|None)->str:
  aliases={'LAS':'LASK'}
  return aliases.get(code,code)
 
+async def _is_ucl_scope(db:AsyncSession,provider:str,season:int,tournament_id:int|None)->bool:
+ if provider!='sstats':return False
+ if tournament_id is not None:
+  tournament=await db.get(Tournament,tournament_id)
+  return bool(tournament and int(tournament.provider_id or 0)==2)
+ return season==2026
+
 async def _main_stage_matches(db,provider,season,tournament_id:int|None=None):
  stmt=select(Match).where(Match.provider==provider,Match.season==season)
  if tournament_id is not None:stmt=stmt.where(Match.tournament_id==tournament_id)
  matches=(await db.execute(stmt.order_by(Match.kickoff_at))).scalars().all()
- if tournament_id is None and provider=='sstats' and season==2026:return [m for m in matches if classify_ucl_round(season,m.kickoff_at) is not None]
+ if await _is_ucl_scope(db,provider,season,tournament_id):
+  main=[]
+  for m in matches:
+   c=classify_ucl_round(season,m.kickoff_at)
+   if c and c.get('stage') in {'league_phase','knockout'}:main.append(m)
+  if main:return main
  return matches
 
 async def _deadline(db,provider,season,tournament_id:int|None=None):
  matches=await _main_stage_matches(db,provider,season,tournament_id)
  if not matches:raise HTTPException(404,'Tournament matches not found')
- if provider=='sstats' and season==2026:
-  md1=[m.kickoff_at for m in matches if (classify_ucl_round(season,m.kickoff_at) or {}).get('stage')=='league_phase' and (classify_ucl_round(season,m.kickoff_at) or {}).get('matchday')==1]
+ if await _is_ucl_scope(db,provider,season,tournament_id):
+  md1=[]
+  for m in matches:
+   c=classify_ucl_round(season,m.kickoff_at) or {}
+   if c.get('stage')=='league_phase' and c.get('matchday')==1:md1.append(m.kickoff_at)
   if md1:return min(md1)
  return matches[0].kickoff_at
 
@@ -59,7 +74,8 @@ def _player_out(player:Player|None):
  return {'id':player.id,'sstats_id':player.provider_id if player.provider=='sstats' else None,'name':player.display_name or player.name,'team':team_name_ru(player.team_name) if player.team_name else None,'team_original':player.team_name,'position':player.position,'number':player.shirt_number,'nationality':player.nationality,'photo':f'/api/players/{player.id}/photo' if (player.photo_data or player.photo_source_url) else None}
 
 async def _out(db,p,deadline,tournament_id=None):
- now=datetime.now(timezone.utc);result={'provider':p.provider if p else None,'season':p.season if p else None,'tournament_id':p.tournament_id if p else tournament_id,'deadline_at':deadline,'locked':now>=deadline,'prediction':None}
+ now=datetime.now(timezone.utc);started=now>=deadline;locked=started and p is not None
+ result={'provider':p.provider if p else None,'season':p.season if p else None,'tournament_id':p.tournament_id if p else tournament_id,'deadline_at':deadline,'started':started,'locked':locked,'can_save':not locked,'first_save_only':started and p is None,'prediction':None}
  if not p:return result
  ids=[x for x in (p.top_scorer_player_id,p.top_assistant_player_id,p.best_player_player_id) if x];players=(await db.execute(select(Player).where(Player.id.in_(ids)))).scalars().all() if ids else [];by_id={x.id:x for x in players}
  result['prediction']={'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(by_id.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(by_id.get(p.top_assistant_player_id)),'best_player_player':_player_out(by_id.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
@@ -157,7 +173,11 @@ async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=20
   tournament=await db.get(Tournament,tournament_id)
   if not tournament or tournament.provider!=provider:raise HTTPException(422,'Invalid tournament')
  deadline=await _deadline(db,provider,season,tournament_id);now=datetime.now(timezone.utc)
- if now>=deadline:raise HTTPException(409,'Tournament prediction deadline has passed')
+ stmt=select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season)
+ if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
+ else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
+ p=await db.scalar(stmt)
+ if now>=deadline and p is not None:raise HTTPException(409,'Основной этап уже начался. Этот прогноз уже зафиксирован и больше не редактируется.')
  values={k:getattr(body,k).strip() for k in ('winner','second_place','third_place','top_scorer','top_assistant','best_player')};teams=await _competition_teams(db,provider,season,tournament_id);allowed={x['name'].casefold():x['name'] for x in teams}
  for k in ('winner','second_place','third_place'):
   canonical=allowed.get(values[k].casefold())
@@ -166,10 +186,6 @@ async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=20
  if len({values['winner'].casefold(),values['second_place'].casefold(),values['third_place'].casefold()})<3:raise HTTPException(422,'Winner, second and third place must be different teams')
  scorer=await _canonical_player(db,body.top_scorer_player_id,body.top_scorer,provider,season,tournament_id);assistant=await _canonical_player(db,body.top_assistant_player_id,body.top_assistant,provider,season,tournament_id);best=await _canonical_player(db,body.best_player_player_id,body.best_player,provider,season,tournament_id)
  values['top_scorer']=scorer.name;values['top_assistant']=assistant.name;values['best_player']=best.name;player_ids={'top_scorer_player_id':scorer.id,'top_assistant_player_id':assistant.id,'best_player_player_id':best.id}
- stmt=select(TournamentPrediction).where(TournamentPrediction.user_id==user.id,TournamentPrediction.provider==provider,TournamentPrediction.season==season)
- if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
- else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
- p=await db.scalar(stmt)
  if p is None:p=TournamentPrediction(user_id=user.id,provider=provider,season=season,tournament_id=tournament_id,deadline_at=deadline,**values,**player_ids);db.add(p)
  else:
   for k,v in {**values,**player_ids}.items():setattr(p,k,v)
