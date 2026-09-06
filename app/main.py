@@ -99,7 +99,7 @@ async def mini_app():
   '<script src="/static/match-detail-safety.js?v=2"></script>'
   '<script src="/static/modal-hard-close.js?v=4"></script>'
   '<script src="/static/match-detail-groups.js?v=1"></script>'
-  '<script src="/static/match-feed.js?v=6"></script>'
+  '<script src="/static/match-feed.js?v=7"></script>'
   '<script src="/static/prediction-state.js?v=3"></script>'
  )
  return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
