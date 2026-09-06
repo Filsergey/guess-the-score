@@ -126,7 +126,12 @@ async def tournament_catalog(user: User = Depends(get_current_user)):
         }
         for item in TOP_TOURNAMENTS
     ]
-    return {"count": len(response), "response": response, "source": "fixed-top-tournaments"}
+    return {
+        "count": len(response),
+        "response": response,
+        "source": "fixed-top-tournaments",
+        "sstats_api_key_configured": bool(settings.sstats_api_key),
+    }
 
 
 @router.get("/catalog/logo-check")
@@ -158,7 +163,8 @@ async def sync_catalog_tournament(
         raise HTTPException(422, "Этот турнир недоступен для создания лиги")
 
     # Deliberately blocking: the user league is created only after matches, teams,
-    # team logos and players for the selected season are fully prepared.
+    # players and other core football data for the selected season are prepared.
+    # Missing team logos are allowed and filled in the background.
     try:
         result = await prepare_sstats_competition(
             db,
@@ -195,6 +201,7 @@ async def sync_catalog_tournament(
         "name": tournament.name,
         "ready": True,
         "sync": result,
+        "sstats_api_key_configured": bool(settings.sstats_api_key),
     }
 
 
