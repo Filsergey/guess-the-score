@@ -45,6 +45,11 @@ css.textContent=`
   object-position:center!important;
   transform:none!important;
 }
+.ach-showcase[data-ach-code="only_one"] .ach-showcase-art-wrap{
+  background:#10263b url('/static/achievements/champion-crown.webp?v=1') center/cover no-repeat!important;
+}
+.ach-showcase[data-ach-code="only_one"] .ach-showcase-art{opacity:0!important;transition:opacity .18s ease!important}
+.ach-showcase[data-ach-code="only_one"] .ach-showcase-art[data-unique-ready="1"]{opacity:1!important}
 .ach-showcase-lock{
   right:3px!important;
   bottom:3px!important;
