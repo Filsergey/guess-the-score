@@ -15,6 +15,7 @@ from app.models import LeagueMember, Match, OraclePrediction, Prediction, User, 
 from app.profile_models import UserProfile
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
+ORACLE_STYLES={"merciless","irony","calm","numbers"}
 
 class PredictionInput(BaseModel):
     home_score: int = Field(ge=0, le=30)
@@ -23,6 +24,7 @@ class PredictionInput(BaseModel):
 class ProfileUpdate(BaseModel):
     display_name: str = Field(min_length=1, max_length=80)
     avatar_data_url: str | None = Field(default=None, max_length=2500000)
+    oracle_style: str | None = Field(default=None, max_length=32)
 
 def _outcome(home:int,away:int)->int:return 1 if home>away else -1 if home<away else 0
 
@@ -42,8 +44,8 @@ def serialize_prediction(prediction:Prediction,match:Match)->dict:
 
 def _custom_avatar_url(user_id:int)->str:return f"/api/predictions/profile/avatar/{user_id}"
 
-def _profile_response(user:User)->dict:
-    return {"id":user.id,"telegram_id":user.telegram_id,"username":user.username,"display_name":user.display_name,"avatar_url":user.avatar_url,"role":user.role,"registered_at":user.registered_at,"last_login_at":user.last_login_at}
+def _profile_response(user:User,profile:UserProfile|None=None)->dict:
+    return {"id":user.id,"telegram_id":user.telegram_id,"username":user.username,"display_name":user.display_name,"avatar_url":user.avatar_url,"role":user.role,"registered_at":user.registered_at,"last_login_at":user.last_login_at,"oracle_style":profile.oracle_style if profile and profile.oracle_style in ORACLE_STYLES else "irony"}
 
 async def _apply_custom_profile(user:User,db:AsyncSession)->User:
     profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id))
@@ -71,7 +73,7 @@ def _decode_avatar(data_url:str)->tuple[bytes,str]:
 
 @router.get("/profile/me")
 async def profile_me(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
-    user=await _apply_custom_profile(user,db);return _profile_response(user)
+    user=await _apply_custom_profile(user,db);profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id));return _profile_response(user,profile)
 
 @router.patch("/profile/me")
 async def update_profile(body:ProfileUpdate,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
@@ -80,12 +82,18 @@ async def update_profile(body:ProfileUpdate,user:User=Depends(get_current_user),
     profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id))
     if profile is None:profile=UserProfile(user_id=user.id);db.add(profile)
     profile.display_name=name;user.display_name=name
+    if body.oracle_style is not None:
+        style=body.oracle_style.strip().lower()
+        if style not in ORACLE_STYLES:raise HTTPException(422,"Неизвестный стиль Оракула")
+        profile.oracle_style=style
+    elif not profile.oracle_style:
+        profile.oracle_style="irony"
     if body.avatar_data_url is not None:
         raw,media_type=_decode_avatar(body.avatar_data_url)
         profile.avatar_data=raw;profile.avatar_media_type=media_type;user.avatar_url=_custom_avatar_url(user.id)
     profile.updated_at=datetime.now(timezone.utc)
-    await db.commit();await db.refresh(user)
-    return _profile_response(user)
+    await db.commit();await db.refresh(user);await db.refresh(profile)
+    return _profile_response(user,profile)
 
 @router.get("/profile/avatar/{user_id}")
 async def profile_avatar(user_id:int,db:AsyncSession=Depends(get_db)):
