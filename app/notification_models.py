@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models import Base, User
+from app.models import Base, User, UserLeague
 
 
 class NotificationDelivery(Base):
@@ -19,3 +19,18 @@ class NotificationDelivery(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, index=True)
 
     user: Mapped[User] = relationship()
+
+
+class LeagueTelegramChat(Base):
+    __tablename__ = "league_telegram_chats"
+    __table_args__ = (UniqueConstraint("league_id", name="uq_league_telegram_chat_league"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    bound_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    league: Mapped[UserLeague] = relationship()
+    bound_by: Mapped[User] = relationship()
