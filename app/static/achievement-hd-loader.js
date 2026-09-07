@@ -4,7 +4,7 @@ const HD={
  'Серия точных':['exact-streak-hd',5],
  'На серии':['hot-streak-hd',3],
  'Охотник на Оракула':['oracle-hunter-hd',2],
- 'Один такой':['unique-hd',4],
+ 'Один такой':['unique-one-new',8],
  'Король тура':['round-king-hd',4],
  'Лучший прогнозист тура':['round-king-hd',4],
  'Идеальный тур':['ideal-round-hd',3]
@@ -16,7 +16,7 @@ function hdUrl(title){
  if(!spec)return Promise.resolve('');
  const [key,count]=spec;
  if(cache.has(key))return cache.get(key);
- const p=Promise.all(Array.from({length:count},(_,i)=>fetch(`/static/achievements/hd384/${key}.${i}.b64?v=2`,{cache:'reload'}).then(r=>{if(!r.ok)throw new Error(`${key}.${i}`);return r.text()}))).then(parts=>{
+ const p=Promise.all(Array.from({length:count},(_,i)=>fetch(`/static/achievements/hd384/${key}.${i}.b64?v=3`,{cache:'reload'}).then(r=>{if(!r.ok)throw new Error(`${key}.${i}`);return r.text()}))).then(parts=>{
   const b64=parts.join('').replace(/\s+/g,'');
   const raw=atob(b64),bytes=new Uint8Array(raw.length);
   for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
