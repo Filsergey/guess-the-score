@@ -13,7 +13,7 @@ from app.notification_models import LeagueTelegramChat
 from app.profile_models import UserProfile
 from app.services.notifications import DEFAULT_NOTIFICATION_PREFERENCES, _send_telegram, normalize_preferences
 
-router=APIRouter(prefix='/api/notifications',tags=['notifications'])
+router=APIRouter(prefix='/notifications',tags=['notifications'])
 
 class PreferencesBody(BaseModel):
     prediction_reminders:bool|None=None
