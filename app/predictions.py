@@ -71,18 +71,19 @@ async def match_prediction_participants(match_id:int,league_id:int|None=Query(de
     for member,participant,prediction in rows:
         mine=participant.id==user.id;has=prediction is not None;submitted+=int(has)
         item={"user_id":participant.id,"display_name":participant.display_name,"username":participant.username,"avatar_url":participant.avatar_url,"has_prediction":has,"is_mine":mine,"is_oracle":False,"member_role":member.role if member else None}
-        if has and (started or mine):
+        if has and started:
             pts=prediction_points(prediction,match) if final else None;live_pts=score_points(prediction.home_score,prediction.away_score,match.home_goals,match.away_goals) if live else None
             item["prediction"]={"home_score":prediction.home_score,"away_score":prediction.away_score,"points":pts,"live_points":live_pts}
         response.append(item)
     oracle_included=False
     if league and league.include_oracle:
-        oracle_included=True;op=await db.scalar(select(OraclePrediction).where(OraclePrediction.match_id==match_id));prediction=None
+        oracle_included=True;op=await db.scalar(select(OraclePrediction).where(OraclePrediction.match_id==match_id));oracle_prediction=None;oracle_has_prediction=False
         if op and op.generated_at and op.generated_at<match.kickoff_at:
             try:
-                payload=json.loads(op.payload_json);ph=int(payload["home_score"]);pa=int(payload["away_score"]);prediction={"home_score":ph,"away_score":pa,"points":score_points(ph,pa,match.home_goals,match.away_goals) if final else None,"live_points":score_points(ph,pa,match.home_goals,match.away_goals) if live else None}
+                payload=json.loads(op.payload_json);ph=int(payload["home_score"]);pa=int(payload["away_score"]);oracle_has_prediction=True
+                if started:oracle_prediction={"home_score":ph,"away_score":pa,"points":score_points(ph,pa,match.home_goals,match.away_goals) if final else None,"live_points":score_points(ph,pa,match.home_goals,match.away_goals) if live else None}
             except (ValueError,TypeError,KeyError,json.JSONDecodeError):pass
-        response.append({"user_id":None,"display_name":"Оракул","username":None,"avatar_url":None,"has_prediction":prediction is not None,"is_mine":False,"is_oracle":True,"member_role":"oracle","prediction":prediction})
+        response.append({"user_id":None,"display_name":"Оракул","username":None,"avatar_url":None,"has_prediction":oracle_has_prediction,"is_mine":False,"is_oracle":True,"member_role":"oracle","prediction":oracle_prediction})
     if live or final:
         key="live_points" if live else "points"
         response.sort(key=lambda x:(-(x.get("prediction") or {}).get(key,-1),not x.get("has_prediction"),(x.get("display_name") or "").casefold()))
