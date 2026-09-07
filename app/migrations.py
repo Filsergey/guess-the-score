@@ -53,6 +53,8 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_tournament_background TEXT NULL",
         "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS oracle_style VARCHAR(32) NOT NULL DEFAULT 'irony'",
         "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS notification_preferences TEXT NOT NULL DEFAULT '{}'",
+        "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS notification_defaults_version INTEGER NOT NULL DEFAULT 0",
+        "UPDATE user_profiles SET notification_preferences='{}', notification_defaults_version=1 WHERE notification_defaults_version < 1",
     ]
     for statement in statements:
         await conn.execute(text(statement))
