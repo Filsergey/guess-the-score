@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 
 from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, Text
@@ -17,3 +18,12 @@ class UserProfile(Base):
     oracle_style: Mapped[str] = mapped_column(String(32), default="irony")
     notification_preferences: Mapped[str] = mapped_column(Text, default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @property
+    def notification_timezone(self) -> str:
+        try:
+            raw=json.loads(self.notification_preferences or '{}')
+            value=str(raw.get('_timezone') or '').strip()
+            return value or 'Europe/Moscow'
+        except Exception:
+            return 'Europe/Moscow'
