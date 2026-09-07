@@ -17,6 +17,7 @@ from app.leagues import router as leagues_router
 from app.league_catalog import router as league_catalog_router
 from app.live_standings import router as live_standings_router
 from app.tournament_standings import router as tournament_standings_router
+from app.player_rankings import router as player_rankings_router
 from app.localization import round_name_ru, team_name_ru
 from app.match_details import normalize_full_match
 from app.match_status import status_group, status_label_ru
@@ -75,7 +76,7 @@ async def lifespan(_:FastAPI):
    with suppress(asyncio.CancelledError):await task
 
 app=FastAPI(title=settings.app_name,version='0.37.4',lifespan=lifespan)
-for r in (tournament_standings_router,auth_router,predictions_router,leagues_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
+for r in (player_rankings_router,tournament_standings_router,auth_router,predictions_router,leagues_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
@@ -87,7 +88,7 @@ async def mini_app():
  html=html.replace('<button onclick="toast(\'Меню — следующий раздел\')">Меню</button>','<button id="navMenu" onclick="showMenu()">Меню</button>')
  scripts=(
   '<script src="/static/core-v2.js?v=8"></script>'
-  '<script src="/static/tournament-standings.js?v=3"></script>'
+  '<script src="/static/tournament-standings.js?v=4"></script>'
   '<script src="/static/app-shell.js?v=27"></script>'
   '<script src="/static/achievement-notify.js?v=2" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
