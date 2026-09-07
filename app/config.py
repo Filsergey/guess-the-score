@@ -1,5 +1,30 @@
+import base64
+import hashlib
 from functools import lru_cache
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_P256_ORDER = int("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16)
+
+
+def _derived_vapid_pair(secret: str) -> tuple[str, str]:
+    digest = hashlib.sha256(("gts-webpush-v1:" + secret).encode("utf-8")).digest()
+    scalar = (int.from_bytes(digest, "big") % (_P256_ORDER - 1)) + 1
+    private_key = ec.derive_private_key(scalar, ec.SECP256R1())
+    public_bytes = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    public_key = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode("ascii")
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    return public_key, private_pem
+
 
 class Settings(BaseSettings):
     app_name: str = "Guess The Score API"
@@ -29,6 +54,14 @@ class Settings(BaseSettings):
     oracle_scheduler_hours_ahead: int = 30
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    def model_post_init(self, __context) -> None:
+        secret = (self.jwt_secret or "").strip()
+        if secret:
+            public_key, private_key = _derived_vapid_pair(secret)
+            self.webpush_vapid_public_key = public_key
+            self.webpush_vapid_private_key = private_key
+
 
 @lru_cache
 def get_settings() -> Settings:
