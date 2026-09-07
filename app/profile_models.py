@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
@@ -17,6 +17,7 @@ class UserProfile(Base):
     avatar_media_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
     oracle_style: Mapped[str] = mapped_column(String(32), default="irony")
     notification_preferences: Mapped[str] = mapped_column(Text, default="{}")
+    notification_defaults_version: Mapped[int] = mapped_column(Integer, default=1)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
 
     @property
