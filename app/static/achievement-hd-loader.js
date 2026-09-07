@@ -4,16 +4,12 @@ const HD={
  'Серия точных':['exact-streak-hd',5],
  'На серии':['hot-streak-hd',3],
  'Охотник на Оракула':['oracle-hunter-hd',2],
- 'Один такой':['unique-one-v5',8],
  'Король тура':['round-king-hd',4],
  'Лучший прогнозист тура':['round-king-hd',4],
  'Идеальный тур':['ideal-round-hd',3]
 };
 const cache=new Map();
-function sourceUrl(key,i){
- if(key==='unique-one-v5')return `/static/achievements/unique-one-v5/part_${String(i).padStart(2,'0')}.b64?v=5`;
- return `/static/achievements/hd384/${key}.${i}.b64?v=4`;
-}
+function sourceUrl(key,i){return `/static/achievements/hd384/${key}.${i}.b64?v=4`}
 function hdUrl(title){
  title=String(title||'').trim();
  const spec=HD[title];
