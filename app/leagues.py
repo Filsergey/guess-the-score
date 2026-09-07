@@ -15,6 +15,7 @@ from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, 
 from app.predictions import match_is_final, prediction_points
 from app.tournament_logos import tournament_logo_url
 router=APIRouter(prefix='/api/leagues',tags=['leagues'])
+ORACLE_AVATAR_URL='/static/oracle-avatar.svg?v=1'
 class LeagueCreate(BaseModel):
  name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);tournament_id:int|None=None;is_private:bool=True;include_oracle:bool=True
 class LeagueJoin(BaseModel):invite_code:str=Field(min_length=4,max_length=12)
@@ -128,7 +129,7 @@ async def leaderboard(league_id:int,user:User=Depends(get_current_user),db:Async
    score=_oracle_score(op,by.get(op.match_id)) if by.get(op.match_id) else None
    if score is None:continue
    pts=score[2];submitted+=1;points+=pts;exacts+=pts==3;outcomes+=pts==1
-  accuracy=round((outcomes+exacts)/submitted*100,1) if submitted else 0.;result.append({'user_id':None,'display_name':'Оракул','username':None,'avatar_url':None,'member_role':'oracle','registered_at':None,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'eligible_completed_matches':len(eligible),'missed':max(0,len(eligible)-submitted),'accuracy':accuracy,'is_oracle':True})
+  accuracy=round((outcomes+exacts)/submitted*100,1) if submitted else 0.;result.append({'user_id':None,'display_name':'Оракул','username':None,'avatar_url':ORACLE_AVATAR_URL,'member_role':'oracle','registered_at':None,'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'eligible_completed_matches':len(eligible),'missed':max(0,len(eligible)-submitted),'accuracy':accuracy,'is_oracle':True})
  result.sort(key=lambda x:(-x['points'],-x['exacts'],-x['outcomes'],-x['accuracy'],x['display_name'].lower()))
  for i,row in enumerate(result,1):row['place']=i
  return {'league':serialize_league(league,membership.role if membership else 'superadmin',len(members)),'count':len(result),'response':result}
@@ -160,7 +161,7 @@ async def participant_history(league_id:int,participant:str,user:User=Depends(ge
   elif p is not None:ph,pa=p.home_score,p.away_score;pts=prediction_points(p,m)
   if pts is not None:submitted+=1;points+=pts;exacts+=pts==3;outcomes+=pts==1
   items.append({'match_id':m.id,'kickoff_at':m.kickoff_at,'round':round_name_ru(m.round_name),'home':{'id':home.id,'name':team_name_ru(home.name),'logo':f'/api/team-logo/db/{home.id}','goals':m.home_goals},'away':{'id':away.id,'name':team_name_ru(away.name),'logo':f'/api/team-logo/db/{away.id}','goals':m.away_goals},'prediction':{'home_score':ph,'away_score':pa} if pts is not None else None,'points':pts or 0,'submitted':pts is not None})
- accuracy=round((outcomes+exacts)/submitted*100,1) if submitted else 0.;missed=max(0,len(items)-submitted);participant_data={'user_id':None,'display_name':'Оракул','avatar_url':None,'is_oracle':True} if is_oracle else {'user_id':target.id,'display_name':target.display_name,'avatar_url':target.avatar_url,'is_oracle':False,'registered_at':target.registered_at};return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items),'missed':missed},'count':len(items),'response':items}
+ accuracy=round((outcomes+exacts)/submitted*100,1) if submitted else 0.;missed=max(0,len(items)-submitted);participant_data={'user_id':None,'display_name':'Оракул','avatar_url':ORACLE_AVATAR_URL,'is_oracle':True} if is_oracle else {'user_id':target.id,'display_name':target.display_name,'avatar_url':target.avatar_url,'is_oracle':False,'registered_at':target.registered_at};return {'league':{'id':league.id,'name':league.name},'participant':participant_data,'summary':{'points':points,'outcomes':outcomes,'exacts':exacts,'predictions':submitted,'accuracy':accuracy,'eligible_completed_matches':len(items),'missed':missed},'count':len(items),'response':items}
 # Mounted after helper definitions to avoid circular imports during module initialization.
 from app.match_results import router as match_results_router
 from app.achievements import router as achievements_router
