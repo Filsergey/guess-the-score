@@ -4,7 +4,7 @@ const ART={
  'Серия точных':'/static/achievements/emerald-shield.webp?v=1',
  'На серии':'/static/achievements/crystal-space.webp?v=1',
  'Охотник на Оракула':'/static/achievements/oracle-hunter.webp?v=2',
- 'Один такой':'/static/achievements/champion-crown.webp?v=1',
+ 'Один такой':'/static/achievements/unique-one.webp?v=6',
  'Король тура':'/static/achievements/gold-trophy.webp?v=1',
  'Лучший прогнозист тура':'/static/achievements/gold-trophy.webp?v=1',
  'Идеальный тур':'/static/achievements/ideal-round.webp?v=2'
@@ -22,7 +22,8 @@ function image(title){const src=ART[String(title||'').trim()];return src?`<img c
 function decorateGoals(){document.querySelectorAll('.ach-goal').forEach(card=>{const title=card.querySelector('.ach-goal-title')?.textContent?.trim(),icon=card.querySelector('.ach-goal-icon');if(!title||!icon||!ART[title]||icon.dataset.gtsArt===title)return;icon.innerHTML=image(title);icon.dataset.gtsArt=title})}
 function decorateBadges(){document.querySelectorAll('.ach-badge').forEach(card=>{const title=card.querySelector('.ach-title')?.textContent?.trim(),icon=card.querySelector('.ach-icon');if(!title||!icon||!ART[title]||icon.dataset.gtsArt===title)return;icon.innerHTML=image(title);icon.dataset.gtsArt=title})}
 function decoratePopup(){document.querySelectorAll('.gts-award-pop').forEach(pop=>{const title=pop.querySelector('.gts-award-title')?.textContent?.trim(),icon=pop.querySelector('.gts-award-icon');if(!title||!icon||!ART[title]||icon.dataset.gtsArt===title)return;icon.innerHTML=image(title);icon.dataset.gtsArt=title})}
-function decorate(){decorateGoals();decorateBadges();decoratePopup()}
+function decorateShowcase(){document.querySelectorAll('.ach-showcase').forEach(card=>{const title=card.querySelector('.ach-showcase-title')?.textContent?.trim(),img=card.querySelector('.ach-showcase-art');if(!title||!img||!ART[title])return;const src=ART[title];if(img.dataset.gtsDirectArt===src)return;img.src=src;img.dataset.gtsDirectArt=src;if(title==='Один такой'){delete img.dataset.hdReady;delete img.dataset.hdTitle;delete img.dataset.hdPending}})}
+function decorate(){decorateGoals();decorateBadges();decoratePopup();decorateShowcase()}
 new MutationObserver(decorate).observe(document.body,{childList:true,subtree:true});
-document.addEventListener('gts:ready',decorate);setTimeout(decorate,100);setTimeout(decorate,800);
+document.addEventListener('gts:ready',decorate);document.addEventListener('gts:league-change',()=>setTimeout(decorate,50));setInterval(decorate,600);setTimeout(decorate,50);setTimeout(decorate,300);setTimeout(decorate,900);
 })();
