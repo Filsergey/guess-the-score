@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from pywebpush import WebPushException, webpush
-from sqlalchemy import and_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -18,14 +18,15 @@ from app.push_models import PushSubscription
 
 settings=get_settings()
 DEFAULT_NOTIFICATION_PREFERENCES={
-    'prediction_reminders':True,
-    'participant_activity':True,
-    'match_start':True,
-    'match_results':True,
-    'daily_digest':True,
+    'prediction_reminders':False,
+    'participant_activity':False,
+    'match_start':False,
+    'match_results':False,
+    'daily_digest':False,
     'match_videos':False,
 }
 SERVICE_STARTED_AT=datetime.now(timezone.utc)
+ADMIN_PWA_TEST_EVENT='manual:pwa-test:2026-09-08-v1'
 FACTS=[
     'Первый чемпионат мира прошёл в 1930 году в Уругвае.',
     'Размер футбольных ворот — 7,32 × 2,44 метра.',
@@ -73,7 +74,7 @@ async def _send_telegram(chat_id:int|str,text:str)->bool:
 
 async def deliver_to_user(db:AsyncSession,user:User,event_key:str,pref_key:str,title:str,body:str,url:str='/',telegram_text:str|None=None)->dict:
     prefs=await user_preferences(db,user.id)
-    if not prefs.get(pref_key,True):return {'push':0,'telegram':0,'skipped':'preference'}
+    if not prefs.get(pref_key,False):return {'push':0,'telegram':0,'skipped':'preference'}
     sent_push=0;sent_tg=0
     if not await _already_sent(db,user.id,event_key,'push'):
         subs=(await db.execute(select(PushSubscription).where(PushSubscription.user_id==user.id))).scalars().all()
@@ -87,14 +88,39 @@ async def deliver_to_user(db:AsyncSession,user:User,event_key:str,pref_key:str,t
                 if status in {404,410}:stale.append(sub)
             except Exception:pass
         for sub in stale:await db.delete(sub)
-        if sent_push or stale:
-            await db.commit()
+        if sent_push or stale:await db.commit()
         if sent_push:await _mark_sent(db,user.id,event_key,'push')
     if user.telegram_id and not await _already_sent(db,user.id,event_key,'telegram'):
         ok=await _send_telegram(user.telegram_id,telegram_text or f'{title}\n{body}')
         if ok:
             sent_tg=1;await _mark_sent(db,user.id,event_key,'telegram')
     return {'push':sent_push,'telegram':sent_tg}
+
+async def _send_superadmin_pwa_test_once(db:AsyncSession)->int:
+    admins=(await db.execute(select(User).where(User.role=='superadmin'))).scalars().all();sent_total=0
+    for user in admins:
+        if await _already_sent(db,user.id,ADMIN_PWA_TEST_EVENT,'push'):continue
+        subs=(await db.execute(select(PushSubscription).where(PushSubscription.user_id==user.id))).scalars().all();sent=0;stale=[]
+        for sub in subs:
+            try:
+                await _send_webpush(sub,{
+                    'title':'Тестовое уведомление ⚽',
+                    'body':'PWA-уведомления «Угадай счёт» работают. Это тестовая отправка.',
+                    'url':'/',
+                    'tag':'gts-admin-pwa-test-v1',
+                });sent+=1
+            except WebPushException as exc:
+                status=getattr(exc,'status_code',None) or getattr(getattr(exc,'response',None),'status_code',None)
+                if status in {404,410}:stale.append(sub)
+            except Exception:pass
+        for sub in stale:await db.delete(sub)
+        if stale:await db.commit()
+        if sent:
+            await _mark_sent(db,user.id,ADMIN_PWA_TEST_EVENT,'push');sent_total+=sent
+            print(f'PWA admin test sent: user_id={user.id}, subscriptions={sent}',flush=True)
+        elif subs:
+            print(f'PWA admin test failed: user_id={user.id}, subscriptions={len(subs)}',flush=True)
+    return sent_total
 
 async def _league_members_for_match(db:AsyncSession,match:Match)->list[tuple[UserLeague,User]]:
     rows=(await db.execute(select(UserLeague,User).join(LeagueMember,LeagueMember.league_id==UserLeague.id).join(User,User.id==LeagueMember.user_id).where(UserLeague.tournament_provider==match.provider,UserLeague.tournament_season==match.season,UserLeague.tournament_id==match.tournament_id))).all()
@@ -163,13 +189,17 @@ async def _process_results(db:AsyncSession,now:datetime)->None:
             await deliver_to_user(db,user,f'result:{match.id}','match_results','Матч завершён',f'{home} — {away} {score}.{suffix}',f'/?match={match.id}')
 
 async def _daily_for_user(db:AsyncSession,user:User,now:datetime)->None:
-    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id));tzname=(getattr(profile,'notification_timezone',None) or 'Europe/Moscow') if profile else 'Europe/Moscow'
+    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id));raw={}
+    if profile:
+        try:raw=json.loads(profile.notification_preferences or '{}')
+        except Exception:raw={}
+    tzname=raw.get('_timezone') or 'Europe/Moscow'
     try:tz=ZoneInfo(tzname)
     except Exception:tz=ZoneInfo('Europe/Moscow')
     local=now.astimezone(tz)
     if not (local.hour==8 and local.minute<15):return
-    day_key=local.date().isoformat();prefs=normalize_preferences(profile.notification_preferences if profile else None)
-    if not prefs.get('daily_digest',True):return
+    day_key=local.date().isoformat();prefs=normalize_preferences(raw)
+    if not prefs.get('daily_digest',False):return
     leagues=(await db.execute(select(UserLeague).join(LeagueMember,LeagueMember.league_id==UserLeague.id).where(LeagueMember.user_id==user.id))).scalars().all()
     tournament_ids={x.tournament_id for x in leagues if x.tournament_id};providers={(x.tournament_provider,x.tournament_season) for x in leagues}
     start=datetime.combine(local.date(),datetime.min.time(),tzinfo=tz).astimezone(timezone.utc);end=start+timedelta(days=1)
@@ -191,6 +221,7 @@ async def _daily_for_user(db:AsyncSession,user:User,now:datetime)->None:
 async def run_notification_cycle()->None:
     now=datetime.now(timezone.utc)
     async with SessionLocal() as db:
+        await _send_superadmin_pwa_test_once(db)
         await _process_reminders(db,now);await _process_starts(db,now);await _process_results(db,now)
         users=(await db.execute(select(User))).scalars().all()
         for user in users:await _daily_for_user(db,user,now)
