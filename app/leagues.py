@@ -15,7 +15,7 @@ from app.models import LeagueMember, Match, OraclePrediction, Prediction, Team, 
 from app.predictions import match_is_final, prediction_points
 from app.tournament_logos import tournament_logo_url
 router=APIRouter(prefix='/api/leagues',tags=['leagues'])
-ORACLE_AVATAR_URL='/static/oracle-avatar.svg?v=1'
+ORACLE_AVATAR_URL='/static/oracle-avatar.webp?v=2'
 class LeagueCreate(BaseModel):
  name:str=Field(min_length=2,max_length=120);tournament_provider:str=Field(default='sstats',max_length=32);tournament_season:int=Field(default=2026,ge=2020,le=2100);tournament_id:int|None=None;is_private:bool=True;include_oracle:bool=True
 class LeagueJoin(BaseModel):invite_code:str=Field(min_length=4,max_length=12)
