@@ -40,4 +40,5 @@ document.addEventListener('gts:league-change',schedule);
 const start=()=>{const root=document.getElementById('leaguesView');if(root)new MutationObserver(schedule).observe(root,{childList:true,subtree:true});schedule()};
 setTimeout(start,350);setTimeout(schedule,1000);
 window.applyLocalTournamentLogos=schedule;
+if(!document.querySelector('script[data-gts-settings-view]')){const s=document.createElement('script');s.src='/static/settings-view.js?v=1';s.dataset.gtsSettingsView='1';document.body.appendChild(s)}
 })();
