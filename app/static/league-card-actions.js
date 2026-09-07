@@ -13,7 +13,8 @@ style.textContent=`
 #leaguesView .league-card.has-delete .league-main{min-width:0;width:100%;display:flex;flex-direction:column;justify-content:center;gap:2px}
 #leaguesView .league-card.has-delete .league-name-row{display:flex;min-width:0;padding:0!important;line-height:1.1}
 #leaguesView .league-card.has-delete .league-name{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px;line-height:17px;color:#fff}
-#leaguesView .league-card.has-delete .league-role,#leaguesView .league-card .league-owner{margin-left:5px;flex:0 0 auto;color:var(--accent-soft)!important;background:rgba(var(--accent-rgb),.13)!important;border-color:rgba(var(--accent-rgb),.35)!important}
+#leaguesView .league-card.has-delete .league-role{margin-left:5px;flex:0 0 auto;color:var(--accent-soft)!important;background:rgba(var(--accent-rgb),.13)!important;border-color:rgba(var(--accent-rgb),.35)!important}
+#leaguesView .league-card .league-owner{margin-left:5px;flex:0 0 auto;color:#fff!important;background:#111827!important;border-color:var(--accent)!important;opacity:1!important;text-shadow:none!important;box-shadow:0 2px 7px rgba(0,0,0,.18)!important}
 #leaguesView .league-card.has-delete .league-meta{padding:0!important;margin:0!important;display:flex!important;flex-direction:column!important;align-items:flex-start!important;gap:1px!important;line-height:1.15}
 #leaguesView .league-card.has-delete .league-meta>*{margin:0!important}
 #leaguesView .league-card .league-arrow{display:none!important}
