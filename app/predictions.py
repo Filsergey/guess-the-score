@@ -16,6 +16,7 @@ from app.profile_models import UserProfile
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 ORACLE_STYLES={"merciless","irony","calm","numbers"}
+ORACLE_AVATAR_URL="/static/oracle-avatar.svg?v=1"
 
 class PredictionInput(BaseModel):
     home_score: int = Field(ge=0, le=30)
@@ -151,7 +152,7 @@ async def match_prediction_participants(match_id:int,league_id:int|None=Query(de
                 payload=json.loads(op.payload_json);ph=int(payload["home_score"]);pa=int(payload["away_score"]);oracle_has_prediction=True
                 if started:oracle_prediction={"home_score":ph,"away_score":pa,"points":score_points(ph,pa,match.home_goals,match.away_goals) if final else None,"live_points":score_points(ph,pa,match.home_goals,match.away_goals) if live else None}
             except (ValueError,TypeError,KeyError,json.JSONDecodeError):pass
-        response.append({"user_id":None,"display_name":"Оракул","username":None,"avatar_url":None,"has_prediction":oracle_has_prediction,"is_mine":False,"is_oracle":True,"member_role":"oracle","prediction":oracle_prediction})
+        response.append({"user_id":None,"display_name":"Оракул","username":None,"avatar_url":ORACLE_AVATAR_URL,"has_prediction":oracle_has_prediction,"is_mine":False,"is_oracle":True,"member_role":"oracle","prediction":oracle_prediction})
     if live or final:
         key="live_points" if live else "points"
         response.sort(key=lambda x:(-(x.get("prediction") or {}).get(key,-1),not x.get("has_prediction"),(x.get("display_name") or "").casefold()))
