@@ -38,7 +38,7 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE tournament_predictions ADD COLUMN IF NOT EXISTS best_player_player_id INTEGER NULL REFERENCES players(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_top_scorer_player_id ON tournament_predictions (top_scorer_player_id)",
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_top_assistant_player_id ON tournament_predictions (top_assistant_player_id)",
-        "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_best_player_id ON tournament_predictions (best_player_player_id)",
+        "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_best_player_player_id ON tournament_predictions (best_player_player_id)",
         "ALTER TABLE tournament_predictions ADD COLUMN IF NOT EXISTS tournament_id INTEGER NULL REFERENCES tournaments(id) ON DELETE SET NULL",
         "CREATE INDEX IF NOT EXISTS ix_tournament_predictions_tournament_id ON tournament_predictions (tournament_id)",
         "ALTER TABLE tournament_predictions DROP CONSTRAINT IF EXISTS uq_tournament_prediction_user_competition",
@@ -52,6 +52,7 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_background TEXT NULL",
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_tournament_background TEXT NULL",
         "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS oracle_style VARCHAR(32) NOT NULL DEFAULT 'irony'",
+        "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS notification_preferences TEXT NOT NULL DEFAULT '{}'",
     ]
     for statement in statements:
         await conn.execute(text(statement))
