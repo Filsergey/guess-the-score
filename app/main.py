@@ -87,7 +87,7 @@ async def mini_app():
  html=html.replace('<button onclick="toast(\'Меню — следующий раздел\')">Меню</button>','<button id="navMenu" onclick="showMenu()">Меню</button>')
  scripts=(
   '<script src="/static/core-v2.js?v=8"></script>'
-  '<script src="/static/tournament-standings.js?v=2"></script>'
+  '<script src="/static/tournament-standings.js?v=3"></script>'
   '<script src="/static/app-shell.js?v=27"></script>'
   '<script src="/static/achievement-notify.js?v=2" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'

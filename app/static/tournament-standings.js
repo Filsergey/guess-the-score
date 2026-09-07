@@ -32,7 +32,7 @@ window.loadTournamentStandings=async function(){
  try{
   const d=await GTS.api(`/api/leagues/${id}/tournament-standings`);
   if(seq!==request||id!==window.GTS?.leagueId)return;
-  root.innerHTML=`<div class="club-heading">${esc(d.name)}<small>Сезон ${esc(d.season)}</small></div>`+(d.groups.length?d.groups.map(groupHtml).join(''):'<div class="empty">Таблица турнира пока не опубликована</div>');
+  root.innerHTML=(d.groups.length?d.groups.map(groupHtml).join(''):'<div class="empty">Таблица турнира пока не опубликована</div>');
  }catch(e){if(seq===request)root.innerHTML=`<div class="empty error">${esc(e.message)}</div><button class="save secondary" onclick="loadTournamentStandings()">Повторить</button>`}
 };
 })();
