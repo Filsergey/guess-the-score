@@ -35,12 +35,32 @@ css.textContent=`
   margin:12px auto 11px!important;
   border-radius:34px!important;
   box-sizing:border-box!important;
+  overflow:hidden!important;
 }
 .ach-showcase-art{
   width:calc(100% - 8px)!important;
   height:calc(100% - 8px)!important;
   border-radius:30px!important;
   object-fit:cover!important;
+}
+/* The current unique-achievement source has damaged pixels at the bottom.
+   Crop that strip out only on this card while keeping the goal and bright ball visible. */
+.ach-showcase[data-ach-code="only_one"] .ach-showcase-art{
+  width:100%!important;
+  height:100%!important;
+  border-radius:30px!important;
+  object-fit:cover!important;
+  transform:scale(1.42) translateY(-7%)!important;
+  transform-origin:50% 38%!important;
+}
+.ach-showcase[data-ach-code="only_one"] .ach-showcase-art-wrap::after{
+  content:'';
+  position:absolute;
+  left:0;right:0;bottom:0;
+  height:18%;
+  pointer-events:none;
+  background:linear-gradient(to bottom,transparent,rgba(6,18,28,.34));
+  border-radius:0 0 30px 30px;
 }
 .ach-showcase-lock{
   right:3px!important;
