@@ -1,7 +1,9 @@
+import base64
 import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +12,17 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.match_status import is_final_status, is_live_status
 from app.models import LeagueMember, Match, OraclePrediction, Prediction, User, UserLeague
+from app.profile_models import UserProfile
 
 router = APIRouter(prefix="/api/predictions", tags=["predictions"])
 
 class PredictionInput(BaseModel):
     home_score: int = Field(ge=0, le=30)
     away_score: int = Field(ge=0, le=30)
+
+class ProfileUpdate(BaseModel):
+    display_name: str = Field(min_length=1, max_length=80)
+    avatar_data_url: str | None = Field(default=None, max_length=2500000)
 
 def _outcome(home:int,away:int)->int:return 1 if home>away else -1 if home<away else 0
 
@@ -32,6 +39,59 @@ def prediction_points(prediction:Prediction,match:Match)->int|None:
 
 def serialize_prediction(prediction:Prediction,match:Match)->dict:
     return {"id":prediction.id,"match_id":prediction.match_id,"home_score":prediction.home_score,"away_score":prediction.away_score,"created_at":prediction.created_at,"updated_at":prediction.updated_at,"locked":datetime.now(timezone.utc)>=match.kickoff_at,"points":prediction_points(prediction,match)}
+
+def _custom_avatar_url(user_id:int)->str:return f"/api/predictions/profile/avatar/{user_id}"
+
+def _profile_response(user:User)->dict:
+    return {"id":user.id,"telegram_id":user.telegram_id,"username":user.username,"display_name":user.display_name,"avatar_url":user.avatar_url,"role":user.role,"registered_at":user.registered_at,"last_login_at":user.last_login_at}
+
+async def _apply_custom_profile(user:User,db:AsyncSession)->User:
+    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id))
+    if profile is None:return user
+    changed=False
+    if profile.display_name and user.display_name!=profile.display_name:user.display_name=profile.display_name;changed=True
+    if profile.avatar_data:
+        avatar_url=_custom_avatar_url(user.id)
+        if user.avatar_url!=avatar_url:user.avatar_url=avatar_url;changed=True
+    if changed:await db.commit();await db.refresh(user)
+    return user
+
+def _decode_avatar(data_url:str)->tuple[bytes,str]:
+    allowed={"image/jpeg","image/png","image/webp"}
+    try:
+        header,payload=data_url.split(",",1)
+        media_type=header.removeprefix("data:").split(";",1)[0].lower()
+        if media_type not in allowed or ";base64" not in header.lower():raise ValueError
+        raw=base64.b64decode(payload,validate=True)
+    except Exception as exc:
+        raise HTTPException(422,"Некорректный файл аватарки") from exc
+    if len(raw)<100:raise HTTPException(422,"Файл аватарки пустой")
+    if len(raw)>1500000:raise HTTPException(413,"Аватарка слишком большая")
+    return raw,media_type
+
+@router.get("/profile/me")
+async def profile_me(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
+    user=await _apply_custom_profile(user,db);return _profile_response(user)
+
+@router.patch("/profile/me")
+async def update_profile(body:ProfileUpdate,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
+    name=body.display_name.strip()
+    if len(name)<2:raise HTTPException(422,"Имя должно быть не короче 2 символов")
+    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user.id))
+    if profile is None:profile=UserProfile(user_id=user.id);db.add(profile)
+    profile.display_name=name;user.display_name=name
+    if body.avatar_data_url is not None:
+        raw,media_type=_decode_avatar(body.avatar_data_url)
+        profile.avatar_data=raw;profile.avatar_media_type=media_type;user.avatar_url=_custom_avatar_url(user.id)
+    profile.updated_at=datetime.now(timezone.utc)
+    await db.commit();await db.refresh(user)
+    return _profile_response(user)
+
+@router.get("/profile/avatar/{user_id}")
+async def profile_avatar(user_id:int,db:AsyncSession=Depends(get_db)):
+    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user_id))
+    if profile is None or not profile.avatar_data:raise HTTPException(404,"Avatar not found")
+    return Response(content=profile.avatar_data,media_type=profile.avatar_media_type or "image/jpeg",headers={"Cache-Control":"no-store, max-age=0"})
 
 @router.put("/matches/{match_id}")
 async def save_prediction(match_id:int,body:PredictionInput,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
