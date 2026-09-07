@@ -51,6 +51,7 @@ async def migrate_provider_keys(conn: AsyncConnection) -> None:
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_icon TEXT NULL",
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_background TEXT NULL",
         "ALTER TABLE user_leagues ADD COLUMN IF NOT EXISTS theme_tournament_background TEXT NULL",
+        "ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS oracle_style VARCHAR(32) NOT NULL DEFAULT 'irony'",
     ]
     for statement in statements:
         await conn.execute(text(statement))
