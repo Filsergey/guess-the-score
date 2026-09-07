@@ -89,8 +89,8 @@ async def mini_app():
  scripts=(
   '<script src="/static/core-v2.js?v=8"></script>'
   '<script src="/static/tournament-standings.js?v=4"></script>'
-  '<script src="/static/app-shell.js?v=27"></script>'
-  '<script src="/static/achievement-notify.js?v=2" data-gts-achievement-notify="1"></script>'
+  '<script src="/static/app-shell.js?v=28"></script>'
+  '<script src="/static/achievement-notify.js?v=6" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
   '<script src="/static/prediction-history.js?v=2"></script>'
   '<script src="/static/leaderboard-me.js?v=2"></script>'
