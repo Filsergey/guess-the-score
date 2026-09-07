@@ -41,4 +41,5 @@ const start=()=>{const root=document.getElementById('leaguesView');if(root)new M
 setTimeout(start,350);setTimeout(schedule,1000);
 window.applyLocalTournamentLogos=schedule;
 if(!document.querySelector('script[data-gts-settings-view]')){const s=document.createElement('script');s.src='/static/settings-view.js?v=1';s.dataset.gtsSettingsView='1';document.body.appendChild(s)}
+if(!document.querySelector('script[data-gts-oracle-style-settings]')){const s=document.createElement('script');s.src='/static/oracle-style-settings.js?v=1';s.dataset.gtsOracleStyleSettings='1';document.body.appendChild(s)}
 })();
