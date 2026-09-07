@@ -3,11 +3,11 @@ const ART={
  'Снайпер':'/static/achievements/fireball.webp?v=1',
  'Серия точных':'/static/achievements/emerald-shield.webp?v=1',
  'На серии':'/static/achievements/crystal-space.webp?v=1',
- 'Охотник на Оракула':'/static/achievements/champion-crown.webp?v=1',
+ 'Охотник на Оракула':'/static/achievements/oracle-hunter.webp?v=2',
  'Один такой':'/static/achievements/crystal-space.webp?v=1',
  'Король тура':'/static/achievements/gold-trophy.webp?v=1',
  'Лучший прогнозист тура':'/static/achievements/gold-trophy.webp?v=1',
- 'Идеальный тур':'/static/achievements/champion-crown.webp?v=1'
+ 'Идеальный тур':'/static/achievements/ideal-round.webp?v=2'
 };
 const css=document.createElement('style');css.textContent=`
 .ach-goal-icon{width:38px!important;height:38px!important;flex:0 0 38px!important;padding:0!important;overflow:hidden!important;position:relative!important;background:#10263b!important;border:1px solid rgba(var(--gts-accent-rgb,36,164,255),.32)!important;box-shadow:0 4px 12px rgba(0,0,0,.18)}
