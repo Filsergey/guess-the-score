@@ -73,7 +73,7 @@ async def lifespan(_:FastAPI):
   for task in tasks:
    with suppress(asyncio.CancelledError):await task
 
-app=FastAPI(title=settings.app_name,version='0.37.3',lifespan=lifespan)
+app=FastAPI(title=settings.app_name,version='0.37.4',lifespan=lifespan)
 for r in (auth_router,predictions_router,leagues_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 
@@ -81,9 +81,12 @@ app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 async def mini_app():
  html=(STATIC_DIR/'index.html').read_text(encoding='utf-8')
  html=html.replace('<script src="/static/core-v2.js?v=3"></script><script src="/static/app-shell.js?v=6"></script>','')
+ html=html.replace('</head>','<link rel="stylesheet" href="/static/menu-view.css?v=1"></head>')
+ html=html.replace('</main><nav class="nav">','<div id="menuView" class="view"></div></main><nav class="nav">')
+ html=html.replace('<button onclick="toast(\'Меню — следующий раздел\')">Меню</button>','<button id="navMenu" onclick="showMenu()">Меню</button>')
  scripts=(
-  '<script src="/static/core-v2.js?v=7"></script>'
-  '<script src="/static/app-shell.js?v=22"></script>'
+  '<script src="/static/core-v2.js?v=8"></script>'
+  '<script src="/static/app-shell.js?v=23"></script>'
   '<script src="/static/achievement-notify.js?v=2" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
   '<script src="/static/prediction-history.js?v=2"></script>'

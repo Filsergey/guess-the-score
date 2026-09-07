@@ -71,12 +71,31 @@ async function enableNotifications(){
     let sub=await reg.pushManager.getSubscription();
     if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(cfg.public_key)});
     const json=sub.toJSON();await apiFetch('/api/auth/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys})});
-    dismissNudge();window.toast?.('Уведомления включены');
+    dismissNudge();window.toast?.('Уведомления включены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:true,permission:Notification.permission}}));
     try{await apiFetch('/api/auth/push/test',{method:'POST'})}catch{}
     return true;
   }catch(e){window.toast?.(e.message||'Не удалось включить уведомления');return false}
 }
-api.enableNotifications=enableNotifications;window.gtsEnableNotifications=enableNotifications;window.gtsPwaInstallHelp=installHelp;
+async function notificationState(){
+  const supported=Boolean(api.ready&&('PushManager' in window)&&('Notification' in window));
+  if(!supported)return {supported:false,enabled:false,permission:'unsupported'};
+  const reg=await api.ready;if(!reg)return {supported:false,enabled:false,permission:'unsupported'};
+  const sub=await reg.pushManager.getSubscription();
+  return {supported:true,enabled:Notification.permission==='granted'&&Boolean(sub),permission:Notification.permission,standalone:api.standalone};
+}
+async function disableNotifications(){
+  try{
+    const reg=await api.ready;if(!reg||!('PushManager' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){
+      await apiFetch('/api/auth/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});
+      await sub.unsubscribe();
+    }
+    dismissNudge();window.toast?.('Уведомления выключены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:false,permission:Notification.permission}}));
+    return true;
+  }catch(e){window.toast?.(e.message||'Не удалось выключить уведомления');return false}
+}
+api.enableNotifications=enableNotifications;api.disableNotifications=disableNotifications;api.notificationState=notificationState;window.gtsEnableNotifications=enableNotifications;window.gtsDisableNotifications=disableNotifications;window.gtsNotificationState=notificationState;window.gtsPwaInstallHelp=installHelp;
 
 async function refreshNudge(){
   if(!localStorage.getItem('access_token'))return;

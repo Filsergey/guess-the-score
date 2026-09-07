@@ -1,0 +1,74 @@
+.menu-page {
+  padding: 2px 0 8px;
+}
+
+.menu-settings-card {
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.menu-setting-copy {
+  min-width: 0;
+}
+
+.menu-setting-copy strong {
+  display: block;
+  font-size: 15px;
+}
+
+.menu-setting-copy span {
+  display: block;
+  margin-top: 4px;
+  color: #879db3;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.notification-toggle {
+  width: 50px;
+  height: 30px;
+  flex: 0 0 50px;
+  padding: 3px;
+  border: 1px solid #36516b;
+  border-radius: 999px;
+  background: #17283a;
+  transition: .2s;
+}
+
+.notification-toggle span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #91a3b5;
+  transition: .2s;
+}
+
+.notification-toggle.on {
+  border-color: var(--gts-accent, #268fff);
+  background: var(--gts-accent, #268fff);
+}
+
+.notification-toggle.on span {
+  transform: translateX(20px);
+  background: #fff;
+}
+
+.notification-toggle:disabled {
+  opacity: .5;
+}
+
+.menu-help {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid #294963;
+  border-radius: 14px;
+  background: #0d1c2e;
+  color: #d9ebfb;
+  font-size: 12px;
+  font-weight: 800;
+}
