@@ -1,5 +1,5 @@
 (()=>{
-const AVATAR='/static/oracle-avatar.svg?v=1';
+const AVATAR='/static/oracle-avatar.webp?v=2';
 const style=document.createElement('style');
 style.textContent=`
 #leaderboard tr.oracle-row{background:linear-gradient(90deg,rgba(72,108,255,.13),rgba(117,78,255,.08));box-shadow:inset 3px 0 0 #6c8cff}
@@ -13,7 +13,7 @@ document.head.appendChild(style);
 function setAvatar(row){
   const wrap=row.querySelector('.player-wrap');if(!wrap)return;
   let avatar=wrap.querySelector('.avatar');
-  if(avatar?.tagName==='IMG'){avatar.src=AVATAR;avatar.alt='Оракул';return}
+  if(avatar?.tagName==='IMG'){if(avatar.src.endsWith(AVATAR))return;avatar.src=AVATAR;avatar.alt='Оракул';return}
   const img=document.createElement('img');img.className='avatar';img.src=AVATAR;img.alt='Оракул';
   if(avatar)avatar.replaceWith(img);else wrap.prepend(img);
 }
