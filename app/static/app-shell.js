@@ -1,5 +1,6 @@
 (()=>{
 const headerCss=document.createElement('link');headerCss.rel='stylesheet';headerCss.href='/static/home-header-v3.css?v=18';document.head.appendChild(headerCss);
+const pwaHeaderCss=document.createElement('link');pwaHeaderCss.rel='stylesheet';pwaHeaderCss.href='/static/pwa-header-fix.css?v=1';document.head.appendChild(pwaHeaderCss);
 const $=id=>document.getElementById(id),tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand()}document.body.dataset.view='home';
 const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#039;'}[m]));let leagues=[],tournaments=[],catalog=[],selectedLeague=null,currentMe=null;
 function toast(t){const el=$('toast');if(!el)return;el.textContent=t;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),1900)}function openSheet(html){$('sheetContent').innerHTML=html;$('modal').classList.add('open')}function closeSheet(){$('modal').classList.remove('open')}$('modal')?.addEventListener('click',e=>{if(e.target===$('modal'))closeSheet()});
