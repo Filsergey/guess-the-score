@@ -6,6 +6,15 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models import Base, User
 
 
+class WebPushKey(Base):
+    __tablename__ = "webpush_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    private_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),)
