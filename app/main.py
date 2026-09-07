@@ -1,10 +1,11 @@
 import asyncio
+import base64
 from collections import Counter
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,8 +90,8 @@ async def mini_app():
  scripts=(
   '<script src="/static/core-v2.js?v=8"></script>'
   '<script src="/static/tournament-standings.js?v=4"></script>'
-  '<script src="/static/app-shell.js?v=28"></script>'
-  '<script src="/static/achievement-notify.js?v=6" data-gts-achievement-notify="1"></script>'
+  '<script src="/static/app-shell.js?v=29"></script>'
+  '<script src="/static/achievement-notify.js?v=7" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
   '<script src="/static/prediction-history.js?v=2"></script>'
   '<script src="/static/leaderboard-me.js?v=2"></script>'
@@ -111,6 +112,16 @@ async def mini_app():
   '<script src="/static/prediction-state.js?v=3"></script>'
  )
  return HTMLResponse(html.replace('</body>',scripts+'</body>'),headers={'Cache-Control':'no-store, no-cache, must-revalidate, max-age=0','Pragma':'no-cache','Expires':'0'})
+
+@app.get('/api/assets/achievements/unique-one.webp',include_in_schema=False)
+async def unique_one_achievement_icon():
+ parts_dir=STATIC_DIR/'achievements'/'unique-one-v5'
+ try:
+  encoded=''.join((parts_dir/f'part_{i:02d}.b64').read_text(encoding='utf-8') for i in range(8))
+  data=base64.b64decode(''.join(encoded.split()),validate=True)
+  if len(data)<1000 or data[:4]!=b'RIFF' or data[8:12]!=b'WEBP':raise ValueError('invalid WebP')
+ except Exception as exc:raise HTTPException(500,f'Unique achievement icon unavailable: {type(exc).__name__}')
+ return Response(content=data,media_type='image/webp',headers={'Cache-Control':'public, max-age=31536000, immutable'})
 
 def require_admin_token(token):
  if not settings.admin_sync_token:raise HTTPException(503,'ADMIN_SYNC_TOKEN is not configured')
