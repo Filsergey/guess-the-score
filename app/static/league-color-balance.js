@@ -9,6 +9,7 @@ s.textContent=`
 #leaguesView .league-card[data-tournament='135'].selected{background:linear-gradient(145deg,rgba(18,42,69,.99),rgba(8,20,34,.99))!important}
 #leaguesView .league-card[data-tournament='78'].selected{background:linear-gradient(145deg,rgba(37,31,38,.99),rgba(18,17,26,.99))!important}
 #leaguesView .league-card .league-emblem{background:rgba(15,34,54,.82)!important}
+#leaguesView .league-card[data-tournament='2'] .league-emblem{background:#fff!important}
 #leaguesView .league-card .league-edit{background:rgba(var(--accent-rgb),.09)!important}
 #leaguesView .league-card .league-role{background:rgba(var(--accent-rgb),.10)!important}
 #leaguesView .league-card.selected .league-emblem{box-shadow:0 0 10px rgba(var(--accent-rgb),.18)}
