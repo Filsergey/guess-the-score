@@ -1,6 +1,7 @@
 (()=>{
 const inTelegram=Boolean(window.Telegram?.WebApp?.initData);
-if(inTelegram)return;
+function openSafariInstall(){const url=new URL(location.origin+'/');url.searchParams.set('pwa_install','1');if(window.Telegram?.WebApp?.openLink){window.Telegram.WebApp.openLink(url.toString(),{try_instant_view:false});return}window.open(url.toString(),'_blank','noopener')}
+if(inTelegram){window.gtsPwaInstallHelp=openSafariInstall;return}
 const installRequested=new URLSearchParams(location.search).get('pwa_install')==='1';
 
 function ensureLink(rel,href,attrs={}){
@@ -39,77 +40,19 @@ const isIOS=/iPhone|iPad|iPod/i.test(navigator.userAgent)||(/Macintosh/i.test(na
 const api={standalone,registration:null,ready:null};
 window.GTSPWA=api;
 if('serviceWorker' in navigator){
-  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=3').then(reg=>{
-    api.registration=reg;
-    return reg;
-  }).catch(()=>null);
+  api.ready=navigator.serviceWorker.register('/static/service-worker.js?v=3').then(reg=>{api.registration=reg;return reg}).catch(()=>null);
 }
 
 function authHeaders(){const token=localStorage.getItem('access_token')||'';return token?{Authorization:`Bearer ${token}`}:{}}
-async function apiFetch(url,opts={}){
-  if(window.GTS?.api)return window.GTS.api(url,opts);
-  const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});let d={};try{d=await r.json()}catch{}
-  if(!r.ok)throw new Error(d.detail||`HTTP ${r.status}`);return d;
-}
-function urlBase64ToUint8Array(value){
-  const padding='='.repeat((4-value.length%4)%4),base64=(value+padding).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(base64),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out;
-}
+async function apiFetch(url,opts={}){if(window.GTS?.api)return window.GTS.api(url,opts);const r=await fetch(url,{...opts,headers:{...(opts.headers||{}),...authHeaders()}});let d={};try{d=await r.json()}catch{}if(!r.ok)throw new Error(d.detail||`HTTP ${r.status}`);return d}
+function urlBase64ToUint8Array(value){const padding='='.repeat((4-value.length%4)%4),base64=(value+padding).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(base64),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out}
 function dismissNudge(){document.querySelector('.gts-pwa-nudge')?.remove()}
-function showNudge(title,text,buttonLabel,onClick){
-  dismissNudge();const el=document.createElement('div');el.className='gts-pwa-nudge';el.innerHTML=`<div class="gts-pwa-nudge-copy"><strong>${title}</strong><span>${text}</span></div><button class="gts-pwa-action">${buttonLabel}</button><button class="gts-pwa-x" aria-label="Закрыть">×</button>`;el.querySelector('.gts-pwa-action').onclick=onClick;el.querySelector('.gts-pwa-x').onclick=dismissNudge;document.body.appendChild(el);
-}
-function installHelp(){
-  dismissNudge();
-  if(window.openSheet)window.openSheet(`<div class="sheet-title">Установить «Угадай счёт»</div><div class="sheet-note" style="text-align:left;line-height:1.65">1. Открой эту страницу в Safari.<br>2. Нажми «Поделиться».<br>3. Выбери «На экран Домой».<br>4. Оставь включённым «Открыть как веб-приложение» и нажми «Добавить».</div><button class="save secondary" onclick="closeSheet()">Понятно</button>`);
-  else alert('Safari → Поделиться → На экран Домой → Добавить');
-}
-async function enableNotifications(){
-  try{
-    const reg=await api.ready;if(!reg||!('PushManager' in window)||!('Notification' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');
-    const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured||!cfg.public_key)throw new Error('Push-уведомления ещё не настроены на сервере');
-    const permission=await Notification.requestPermission();if(permission!=='granted')throw new Error('Разрешение на уведомления не выдано');
-    let sub=await reg.pushManager.getSubscription();
-    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(cfg.public_key)});
-    const json=sub.toJSON();await apiFetch('/api/auth/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys})});
-    dismissNudge();window.toast?.('Уведомления включены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:true,permission:Notification.permission}}));
-    try{await apiFetch('/api/auth/push/test',{method:'POST'})}catch{}
-    return true;
-  }catch(e){window.toast?.(e.message||'Не удалось включить уведомления');return false}
-}
-async function notificationState(){
-  const supported=Boolean(api.ready&&('PushManager' in window)&&('Notification' in window));
-  if(!supported)return {supported:false,enabled:false,permission:'unsupported'};
-  const reg=await api.ready;if(!reg)return {supported:false,enabled:false,permission:'unsupported'};
-  const sub=await reg.pushManager.getSubscription();
-  return {supported:true,enabled:Notification.permission==='granted'&&Boolean(sub),permission:Notification.permission,standalone:api.standalone};
-}
-async function disableNotifications(){
-  try{
-    const reg=await api.ready;if(!reg||!('PushManager' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');
-    const sub=await reg.pushManager.getSubscription();
-    if(sub){
-      await apiFetch('/api/auth/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});
-      await sub.unsubscribe();
-    }
-    dismissNudge();window.toast?.('Уведомления выключены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:false,permission:Notification.permission}}));
-    return true;
-  }catch(e){window.toast?.(e.message||'Не удалось выключить уведомления');return false}
-}
+function showNudge(title,text,buttonLabel,onClick){dismissNudge();const el=document.createElement('div');el.className='gts-pwa-nudge';el.innerHTML=`<div class="gts-pwa-nudge-copy"><strong>${title}</strong><span>${text}</span></div><button class="gts-pwa-action">${buttonLabel}</button><button class="gts-pwa-x" aria-label="Закрыть">×</button>`;el.querySelector('.gts-pwa-action').onclick=onClick;el.querySelector('.gts-pwa-x').onclick=dismissNudge;document.body.appendChild(el)}
+function installHelp(){dismissNudge();if(window.openSheet)window.openSheet(`<div class="sheet-title">Установить «Угадай счёт»</div><div class="sheet-note" style="text-align:left;line-height:1.65">1. Открой эту страницу в Safari.<br>2. Нажми «Поделиться».<br>3. Выбери «На экран Домой».<br>4. Оставь включённым «Открыть как веб-приложение» и нажми «Добавить».</div><button class="save secondary" onclick="closeSheet()">Понятно</button>`);else alert('Safari → Поделиться → На экран Домой → Добавить')}
+async function enableNotifications(){try{const reg=await api.ready;if(!reg||!('PushManager' in window)||!('Notification' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured||!cfg.public_key)throw new Error('Push-уведомления ещё не настроены на сервере');const permission=await Notification.requestPermission();if(permission!=='granted')throw new Error('Разрешение на уведомления не выдано');let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(cfg.public_key)});const json=sub.toJSON();await apiFetch('/api/auth/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys})});dismissNudge();window.toast?.('Уведомления включены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:true,permission:Notification.permission}}));try{await apiFetch('/api/auth/push/test',{method:'POST'})}catch{}return true}catch(e){window.toast?.(e.message||'Не удалось включить уведомления');return false}}
+async function notificationState(){const supported=Boolean(api.ready&&('PushManager' in window)&&('Notification' in window));if(!supported)return {supported:false,enabled:false,permission:'unsupported'};const reg=await api.ready;if(!reg)return {supported:false,enabled:false,permission:'unsupported'};const sub=await reg.pushManager.getSubscription();return {supported:true,enabled:Notification.permission==='granted'&&Boolean(sub),permission:Notification.permission,standalone:api.standalone}}
+async function disableNotifications(){try{const reg=await api.ready;if(!reg||!('PushManager' in window))throw new Error('Push-уведомления не поддерживаются на этом устройстве');const sub=await reg.pushManager.getSubscription();if(sub){await apiFetch('/api/auth/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});await sub.unsubscribe()}dismissNudge();window.toast?.('Уведомления выключены');window.dispatchEvent(new CustomEvent('gts:notification-state',{detail:{supported:true,enabled:false,permission:Notification.permission}}));return true}catch(e){window.toast?.(e.message||'Не удалось выключить уведомления');return false}}
 api.enableNotifications=enableNotifications;api.disableNotifications=disableNotifications;api.notificationState=notificationState;window.gtsEnableNotifications=enableNotifications;window.gtsDisableNotifications=disableNotifications;window.gtsNotificationState=notificationState;window.gtsPwaInstallHelp=installHelp;
-
-async function refreshNudge(){
-  if(!localStorage.getItem('access_token'))return;
-  standalone=window.matchMedia?.('(display-mode: standalone)')?.matches||window.navigator.standalone===true;api.standalone=standalone;
-  if(!standalone){if(isIOS)showNudge('Установить как приложение','Будет открываться отдельно от Safari и сможет получать уведомления.','Как установить',installHelp);return}
-  if(!('Notification' in window)||!('PushManager' in window)||Notification.permission==='denied')return;
-  try{
-    const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured)return;
-    const reg=await api.ready;if(!reg)return;const sub=await reg.pushManager.getSubscription();
-    if(Notification.permission!=='granted'||!sub)showNudge('Включить уведомления','Напомним о матчах и важных событиях лиги.','Включить',enableNotifications);
-  }catch{}
-}
-
-document.addEventListener('gts:ready',()=>setTimeout(refreshNudge,350));
-if(installRequested&&!standalone)setTimeout(installHelp,700);
-window.addEventListener('appinstalled',()=>{standalone=true;api.standalone=true;document.documentElement.dataset.gtsPwa='standalone';dismissNudge();setTimeout(refreshNudge,500);window.dispatchEvent(new CustomEvent('gts:pwa-installed'))});
+async function refreshNudge(){if(!localStorage.getItem('access_token'))return;standalone=window.matchMedia?.('(display-mode: standalone)')?.matches||window.navigator.standalone===true;api.standalone=standalone;if(!standalone){if(isIOS)showNudge('Установить как приложение','Будет открываться отдельно от Safari и сможет получать уведомления.','Как установить',installHelp);return}if(!('Notification' in window)||!('PushManager' in window)||Notification.permission==='denied')return;try{const cfg=await apiFetch('/api/auth/push/config');if(!cfg.configured)return;const reg=await api.ready;if(!reg)return;const sub=await reg.pushManager.getSubscription();if(Notification.permission!=='granted'||!sub)showNudge('Включить уведомления','Напомним о матчах и важных событиях лиги.','Включить',enableNotifications)}catch{}}
+document.addEventListener('gts:ready',()=>setTimeout(refreshNudge,350));if(installRequested&&!standalone)setTimeout(installHelp,700);window.addEventListener('appinstalled',()=>{standalone=true;api.standalone=true;document.documentElement.dataset.gtsPwa='standalone';dismissNudge();setTimeout(refreshNudge,500);window.dispatchEvent(new CustomEvent('gts:pwa-installed'))});
 })();
