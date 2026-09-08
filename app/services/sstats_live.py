@@ -8,6 +8,7 @@ from app.models import Match, Tournament, UserLeague
 from app.providers.sstats import SStatsProvider
 from app.services.push_notifications import process_push_notifications
 from app.services.sstats_sync import _normalize_status, _pick
+from app.services.test_seed import ensure_test_reaction_participant
 
 
 def _rows(payload:dict)->list[dict]:
@@ -117,7 +118,11 @@ async def sync_sstats_live_matches(db:AsyncSession,season:int)->dict:
 
     await db.commit()
     try:
+        test_seed=await ensure_test_reaction_participant(db)
+    except Exception as exc:
+        test_seed={"seeded":False,"error":type(exc).__name__}
+    try:
         push=await process_push_notifications(db)
     except Exception as exc:
         push={"configured":False,"sent":0,"error":type(exc).__name__}
-    return {"season_fallback":season,"competitions":len(scopes),"scopes":scope_results,"live_received":live_received,"live_matched":live_matched,"db_live_before":len(db_live),"stale_live_checked":stale_checked,"kickoff_window_checked":kickoff_checked,"finished_captured":finished_captured,"changed":changed,"live_ids":sorted(live_ids),"errors":errors,"push":push,"synced_at":datetime.now(timezone.utc).isoformat()}
+    return {"season_fallback":season,"competitions":len(scopes),"scopes":scope_results,"live_received":live_received,"live_matched":live_matched,"db_live_before":len(db_live),"stale_live_checked":stale_checked,"kickoff_window_checked":kickoff_checked,"finished_captured":finished_captured,"changed":changed,"live_ids":sorted(live_ids),"errors":errors,"test_seed":test_seed,"push":push,"synced_at":datetime.now(timezone.utc).isoformat()}
