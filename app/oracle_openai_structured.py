@@ -46,6 +46,20 @@ _ORACLE_RESPONSE_SCHEMA = {
                             {"type": "null"},
                         ]
                     },
+                    "match_scenarios": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "base": {"type": "string"},
+                                    "alternative": {"type": "string"},
+                                },
+                                "required": ["base", "alternative"],
+                                "additionalProperties": False,
+                            },
+                            {"type": "null"},
+                        ]
+                    },
                     "failure_risks": {
                         "anyOf": [
                             {"type": "array", "items": {"type": "string"}},
@@ -63,6 +77,7 @@ _ORACLE_RESPONSE_SCHEMA = {
                     "probabilities",
                     "reasoning",
                     "key_factors",
+                    "match_scenarios",
                     "failure_risks",
                 ],
                 "additionalProperties": False,
@@ -75,13 +90,7 @@ _ORACLE_RESPONSE_SCHEMA = {
 
 
 async def _structured_ai_analyze_batch(items):
-    """Oracle analysis with low reasoning + Structured Outputs.
-
-    GPT-5 Mini can spend the output-token budget on reasoning before emitting
-    visible text. Structured Outputs plus an explicit low reasoning effort and a
-    larger output allowance prevents an otherwise successful Responses call from
-    reaching the app with an empty output_text.
-    """
+    """Oracle analysis with low reasoning + Structured Outputs."""
     settings = oracle.settings
     if not settings.openai_oracle_enabled or not settings.openai_api_key or not items:
         return {}
@@ -94,12 +103,21 @@ async def _structured_ai_analyze_batch(items):
         else:
             row["previous_forecast"] = oracle._previous_forecast(item["previous"])
             row["changes"] = item["changes"]
+            if item.get("output_request"):
+                row["output_request"] = item["output_request"]
         dynamic.append(row)
 
     instructions = (
         oracle.ANALYSIS_INSTRUCTIONS
-        + "\nДополнение: поле unchanged обязательно. Для initial всегда unchanged=false и верни полный прогноз. "
-        + "Для delta с unchanged=true остальные nullable-поля верни null."
+        + "\n\nТребования к объяснению прогноза:"
+        + "\n1. reasoning — 3–5 конкретных предложений, максимум около 700 символов. Объясни, кто сильнее, почему выбран такой сценарий и где главный риск."
+        + "\n2. key_factors — 4–6 коротких факторов. Используй конкретные цифры из переданного context, когда они доступны: UEFA club coefficient, рынок 1X2/тоталы/BTTS, последние 10 матчей, xG/Glicko, H2H и таблицу. Не выдумывай отсутствующие данные."
+        + "\n3. match_scenarios.base — базовый сценарий матча в 1–2 предложениях. match_scenarios.alternative — реалистичный альтернативный сценарий в 1–2 предложениях."
+        + "\n4. failure_risks — 2–4 коротких риска, которые могут сломать прогноз."
+        + "\nНе повторяй один и тот же тезис дословно в reasoning, key_factors и scenarios."
+        + "\nПоле unchanged обязательно. Для initial всегда unchanged=false и верни полный прогноз, включая reasoning, key_factors, match_scenarios и failure_risks."
+        + "\nДля обычного delta: если изменения несущественны для прогноза, верни unchanged=true, а остальные nullable-поля — null. Если прогноз меняется, верни только нужные изменившиеся поля, остальные nullable-поля можно вернуть null."
+        + "\nЕсли присутствует output_request.match_scenarios=true, это одноразовое обновление формата старого прогноза. Не меняй счёт, вероятности, confidence, reasoning, key_factors или риски без реальной причины. Верни unchanged=false, match_scenarios заполни, остальные неизменившиеся nullable-поля верни null."
     )
     prompt = instructions + "\nДанные для анализа:\n" + json.dumps(dynamic, ensure_ascii=False, default=str)
 
@@ -117,7 +135,7 @@ async def _structured_ai_analyze_batch(items):
                         "schema": _ORACLE_RESPONSE_SCHEMA,
                     }
                 },
-                max_output_tokens=max(1800, 900 * len(items)),
+                max_output_tokens=max(2100, 1050 * len(items)),
             )
 
         output_text = (getattr(response, "output_text", None) or "").strip()
