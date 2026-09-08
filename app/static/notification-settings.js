@@ -1,7 +1,7 @@
 (()=>{
 const KEY='gts_notification_preferences_v4';
 const API='/api/auth/notifications';
-const DEFAULTS={prediction_reminders:false,participant_activity:false,match_start:false,match_results:false,daily_digest:false,match_videos:false};
+const DEFAULTS={prediction_reminders:true,participant_activity:true,match_start:true,match_results:true,daily_digest:true,match_videos:true};
 const CHANNEL_DEFAULTS={pwa:true,telegram:true};
 const ITEMS=[
  {key:'prediction_reminders',icon:'⏰',title:'Напоминания о прогнозах',text:'Личные напоминания о матчах и проверка прогноза за час до старта.'},
