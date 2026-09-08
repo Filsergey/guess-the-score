@@ -8,7 +8,7 @@ from app.auth import get_current_user
 from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
 from app.localization import team_name_ru
-from app.models import Match, Player, Team, Tournament, TournamentPrediction, User
+from app.models import LeagueMember, Match, Player, Team, Tournament, TournamentPrediction, User, UserLeague
 from app.providers.uefa import UEFAProvider
 
 router=APIRouter(prefix='/api/tournament-predictions',tags=['tournament-predictions'])
@@ -73,12 +73,15 @@ def _player_out(player:Player|None):
  if not player:return None
  return {'id':player.id,'sstats_id':player.provider_id if player.provider=='sstats' else None,'name':player.display_name or player.name,'team':team_name_ru(player.team_name) if player.team_name else None,'team_original':player.team_name,'position':player.position,'number':player.shirt_number,'nationality':player.nationality,'photo':f'/api/players/{player.id}/photo' if (player.photo_data or player.photo_source_url) else None}
 
+def _prediction_out(p:TournamentPrediction,players:dict[int,Player])->dict:
+ return {'winner':team_name_ru(p.winner),'second_place':team_name_ru(p.second_place),'third_place':team_name_ru(p.third_place),'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(players.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(players.get(p.top_assistant_player_id)),'best_player_player':_player_out(players.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
+
 async def _out(db,p,deadline,tournament_id=None):
- now=datetime.now(timezone.utc);started=now>=deadline;locked=started and p is not None
- result={'provider':p.provider if p else None,'season':p.season if p else None,'tournament_id':p.tournament_id if p else tournament_id,'deadline_at':deadline,'started':started,'locked':locked,'can_save':not locked,'first_save_only':started and p is None,'prediction':None}
+ now=datetime.now(timezone.utc);started=now>=deadline;locked=started
+ result={'provider':p.provider if p else None,'season':p.season if p else None,'tournament_id':p.tournament_id if p else tournament_id,'deadline_at':deadline,'started':started,'locked':locked,'can_save':not started,'first_save_only':False,'prediction':None}
  if not p:return result
  ids=[x for x in (p.top_scorer_player_id,p.top_assistant_player_id,p.best_player_player_id) if x];players=(await db.execute(select(Player).where(Player.id.in_(ids)))).scalars().all() if ids else [];by_id={x.id:x for x in players}
- result['prediction']={'winner':p.winner,'second_place':p.second_place,'third_place':p.third_place,'top_scorer':p.top_scorer,'top_assistant':p.top_assistant,'best_player':p.best_player,'top_scorer_player_id':p.top_scorer_player_id,'top_assistant_player_id':p.top_assistant_player_id,'best_player_player_id':p.best_player_player_id,'top_scorer_player':_player_out(by_id.get(p.top_scorer_player_id)),'top_assistant_player':_player_out(by_id.get(p.top_assistant_player_id)),'best_player_player':_player_out(by_id.get(p.best_player_player_id)),'created_at':p.created_at,'updated_at':p.updated_at}
+ result['prediction']=_prediction_out(p,by_id)
  return result
 
 async def _competition_team_models(db,provider,season,tournament_id:int|None=None):
@@ -159,6 +162,30 @@ async def mine(provider:str='sstats',season:int=2026,tournament_id:int|None=None
  else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
  p=await db.scalar(stmt);r=await _out(db,p,deadline,tournament_id);r['provider']=provider;r['season']=season;return r
 
+@router.get('/league/{league_id}')
+async def league_predictions(league_id:int,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db)):
+ league=await db.get(UserLeague,league_id)
+ if league is None:raise HTTPException(404,'Лига не найдена')
+ membership=await db.scalar(select(LeagueMember.id).where(LeagueMember.league_id==league_id,LeagueMember.user_id==user.id))
+ if membership is None and user.role!='superadmin':raise HTTPException(403,'Нет доступа к этой лиге')
+ provider=league.tournament_provider;season=league.tournament_season;tournament_id=league.tournament_id
+ deadline=await _deadline(db,provider,season,tournament_id);started=datetime.now(timezone.utc)>=deadline
+ base={'league_id':league.id,'league_name':league.name,'provider':provider,'season':season,'tournament_id':tournament_id,'deadline_at':deadline,'started':started,'revealed':started}
+ if not started:return {**base,'count':0,'response':[]}
+ members=(await db.execute(select(LeagueMember,User).join(User,User.id==LeagueMember.user_id).where(LeagueMember.league_id==league_id).order_by(LeagueMember.joined_at))).all()
+ user_ids=[u.id for _,u in members]
+ stmt=select(TournamentPrediction).where(TournamentPrediction.user_id.in_(user_ids),TournamentPrediction.provider==provider,TournamentPrediction.season==season)
+ if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
+ else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
+ predictions=(await db.execute(stmt)).scalars().all() if user_ids else [];by_user={p.user_id:p for p in predictions}
+ player_ids={pid for p in predictions for pid in (p.top_scorer_player_id,p.top_assistant_player_id,p.best_player_player_id) if pid}
+ players=(await db.execute(select(Player).where(Player.id.in_(player_ids)))).scalars().all() if player_ids else [];by_player={p.id:p for p in players}
+ items=[]
+ for member,u in members:
+  p=by_user.get(u.id)
+  items.append({'user_id':u.id,'display_name':u.display_name,'username':u.username,'avatar_url':u.avatar_url,'role':member.role,'is_me':u.id==user.id,'has_prediction':p is not None,'prediction':_prediction_out(p,by_player) if p else None})
+ return {**base,'count':len(items),'response':items}
+
 async def _canonical_player(db:AsyncSession,player_id:int|None,submitted_name:str,provider:str,season:int,tournament_id:int|None=None)->Player:
  if not player_id:raise HTTPException(422,f'Выбери игрока «{submitted_name}» из списка')
  player=await db.get(Player,player_id)
@@ -177,7 +204,7 @@ async def save(body:TournamentPredictionBody,provider:str='sstats',season:int=20
  if tournament_id is not None:stmt=stmt.where(TournamentPrediction.tournament_id==tournament_id)
  else:stmt=stmt.where(TournamentPrediction.tournament_id.is_(None))
  p=await db.scalar(stmt)
- if now>=deadline and p is not None:raise HTTPException(409,'Основной этап уже начался. Этот прогноз уже зафиксирован и больше не редактируется.')
+ if now>=deadline:raise HTTPException(409,'Основной этап уже начался. Турнирные прогнозы закрыты и доступны только для просмотра.')
  values={k:getattr(body,k).strip() for k in ('winner','second_place','third_place','top_scorer','top_assistant','best_player')};teams=await _competition_teams(db,provider,season,tournament_id);allowed={x['name'].casefold():x['name'] for x in teams}
  for k in ('winner','second_place','third_place'):
   canonical=allowed.get(values[k].casefold())
