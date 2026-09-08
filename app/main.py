@@ -101,7 +101,7 @@ async def mini_app():
   '<script src="/static/tournament-prediction.js?v=10"></script>'
   '<script src="/static/prediction-sheet.js?v=3"></script>'
   '<script src="/static/tournament-save-guard.js?v=1"></script>'
-  '<script src="/static/match-participants.js?v=4"></script>'
+  '<script src="/static/match-participants.js?v=5"></script>'
   '<script src="/static/match-pitch.js?v=2"></script>'
   '<script src="/static/match-live-cache.js?v=4" data-gts-live-probe="1"></script>'
   '<script src="/static/match-detail.js?v=8" data-gts-match-detail-lazy="1"></script>'
