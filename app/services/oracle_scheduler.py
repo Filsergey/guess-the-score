@@ -14,10 +14,7 @@ settings = get_settings()
 
 
 async def generate_due_oracle_predictions() -> dict:
-    """Check upcoming match context and call OpenAI only for initial/delta analysis."""
-    if not settings.openai_oracle_enabled or not settings.openai_api_key:
-        return {"generated": 0, "reason": "openai-disabled"}
-
+    """Check upcoming context; local forecasts work even when OpenAI is unavailable."""
     now = datetime.now(timezone.utc)
     end = now + timedelta(hours=settings.oracle_scheduler_hours_ahead)
     totals = {"requested": 0, "generated": 0, "unchanged": 0, "local_only": 0, "ai_requested": 0}
@@ -51,8 +48,7 @@ async def generate_due_oracle_predictions() -> dict:
             for key in totals:
                 totals[key] += int(result.get(key) or 0)
 
-            # If everything in this pass failed before getting a stable cache,
-            # do not spin through the same batch repeatedly in one scheduler tick.
+            # Avoid repeatedly retrying the same failed AI batch in one scheduler tick.
             if result.get("ai_requested") and not result.get("generated") and not result.get("unchanged"):
                 break
 
