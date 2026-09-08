@@ -1,5 +1,5 @@
 (()=>{
-  const STYLE_ID='gts-match-detail-close-style-v2';
+  const STYLE_ID='gts-match-detail-close-style-v3';
   const BUTTON_CLASS='gts-match-detail-close-float';
 
   function ensureStyle(){
@@ -48,9 +48,11 @@
     if(!node){
       node=document.createElement('div');
       node.className='gts-match-detail-date';
+      node.textContent=value;
       score.insertBefore(node,score.firstChild);
+      return;
     }
-    node.textContent=value;
+    if(node.textContent!==value)node.textContent=value;
   }
 
   function closeDetail(){
