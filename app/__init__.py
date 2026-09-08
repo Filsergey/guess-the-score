@@ -54,9 +54,11 @@ from app.openai_usage import admin_router as _openai_admin_router
 from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
 from app.oracle_enrichment import install_oracle_enrichment
+from app.oracle_openai_structured import install_structured_oracle_openai
 from app.services.oracle_events import install_oracle_event_hooks
 
 _oracle_router.include_router(_openai_admin_router)
 install_openai_usage_tracking()
 install_oracle_enrichment()
+install_structured_oracle_openai()
 install_oracle_event_hooks()
