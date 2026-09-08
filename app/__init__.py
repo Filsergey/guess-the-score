@@ -32,3 +32,27 @@ try:
 except Exception:
     # Navigation remains usable even if the visual hotfix cannot be injected.
     pass
+
+# Load the admin-only OpenAI usage dashboard from the no-cache root document so
+# PWA/browser caches cannot keep an older menu without the new tab.
+usage_script_marker = "gts-admin-openai-usage-v1"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if usage_script_marker not in html:
+        script = (
+            f'<script id="{usage_script_marker}" '
+            'src="/static/admin-openai-usage.js?v=1" '
+            'data-gts-admin-openai-usage="1"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
+# Register admin usage endpoints on the already-included Oracle router and wrap
+# OpenAI Responses calls before the application starts serving requests.
+from app.openai_usage import admin_router as _openai_admin_router
+from app.openai_usage import install_openai_usage_tracking
+from app.oracle import router as _oracle_router
+
+_oracle_router.include_router(_openai_admin_router)
+install_openai_usage_tracking()
