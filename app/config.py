@@ -47,14 +47,26 @@ class Settings(BaseSettings):
     jwt_secret: str = ""
     jwt_access_minutes: int = 60 * 24 * 7
     superadmin_telegram_id: int | None = None
+
     openai_api_key: str = ""
     openai_oracle_model: str = "gpt-5-mini"
     openai_oracle_enabled: bool = True
+
+    # Oracle now checks local/SStats context first and calls OpenAI only for a new
+    # match or when the context hash changed. Far-away matches are checked rarely.
     oracle_scheduler_enabled: bool = True
     oracle_scheduler_interval_minutes: int = 60
     oracle_scheduler_batch_size: int = 5
     oracle_scheduler_max_batches: int = 4
-    oracle_scheduler_hours_ahead: int = 30
+    oracle_scheduler_hours_ahead: int = 120
+
+    # Expensive web search is isolated to shared team news. One cached team result
+    # is reused by every match involving that team.
+    oracle_news_enabled: bool = True
+    oracle_news_window_hours: int = 12
+    oracle_news_refresh_hours: int = 12
+    oracle_news_final_refresh_hours: int = 4
+    oracle_news_batch_size: int = 10
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
