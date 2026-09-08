@@ -2,18 +2,20 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint, delete, func, select
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.auth import get_current_user
 from app.database import get_db
 from app.leagues import _membership
-from app.models import Base, LeagueMember, Match, User, UserLeague
+from app.models import Base, LeagueMember, Match, Prediction, Team, User, UserLeague
+from app.services.notifications import deliver_to_user
 
 router = APIRouter(prefix="/api/leagues", tags=["league-social"])
 
-REACTION_KINDS = {"laugh", "fire", "clown", "bold", "oracle", "respect"}
+MATCH_REACTION_KINDS = {"cool", "laugh", "smile", "fire", "eyes", "lion", "see_no_evil", "hear_no_evil"}
+LEGACY_REACTION_KINDS = {"laugh", "fire", "clown", "bold", "oracle", "respect"}
 
 
 class LeagueReaction(Base):
@@ -48,9 +50,26 @@ class MatchReaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
+class MatchComment(Base):
+    __tablename__ = "match_comments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), index=True)
+    from_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    target_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class ReactionBody(BaseModel):
     target_user_id: int = Field(ge=1)
     kind: str = Field(min_length=2, max_length=24)
+
+
+class CommentBody(BaseModel):
+    target_user_id: int = Field(ge=1)
+    text: str = Field(min_length=1, max_length=180)
 
 
 async def _target_member(league_id: int, target_user_id: int, db: AsyncSession) -> User:
@@ -81,8 +100,49 @@ async def _started_match(league_id: int, match_id: int, db: AsyncSession) -> tup
     if kickoff.tzinfo is None:
         kickoff = kickoff.replace(tzinfo=timezone.utc)
     if datetime.now(timezone.utc) < kickoff:
-        raise HTTPException(409, "Реакции откроются после начала матча")
+        raise HTTPException(409, "Реакции и комментарии откроются после начала матча")
     return league, match
+
+
+async def _target_prediction(match_id: int, target_user_id: int, db: AsyncSession) -> Prediction:
+    prediction = await db.scalar(select(Prediction).where(
+        Prediction.match_id == match_id,
+        Prediction.user_id == target_user_id,
+    ))
+    if prediction is None:
+        raise HTTPException(409, "У участника нет прогноза на этот матч")
+    return prediction
+
+
+async def _match_label(match: Match, db: AsyncSession) -> str:
+    home = await db.get(Team, match.home_team_id)
+    away = await db.get(Team, match.away_team_id)
+    return f"{home.name if home else 'Хозяева'} — {away.name if away else 'Гости'}"
+
+
+async def _notify_social(
+    db: AsyncSession,
+    target: User,
+    actor: User,
+    match: Match,
+    prediction: Prediction,
+    event_key: str,
+    title: str,
+    action_text: str,
+) -> None:
+    label = await _match_label(match, db)
+    score = f"{prediction.home_score}:{prediction.away_score}"
+    body = f"{actor.display_name} {action_text} · твой прогноз {score}, {label}."
+    await deliver_to_user(
+        db,
+        target,
+        event_key,
+        "participant_activity",
+        title,
+        body,
+        f"/?match={match.id}",
+        telegram_text=f"{title}\n{body}",
+    )
 
 
 @router.get("/{league_id}/matches/{match_id}/reactions")
@@ -94,16 +154,38 @@ async def match_reactions(
 ):
     await _membership(league_id, user, db)
     await _started_match(league_id, match_id, db)
-    rows = (await db.scalars(select(MatchReaction).where(
+    reactions = (await db.scalars(select(MatchReaction).where(
         MatchReaction.league_id == league_id,
         MatchReaction.match_id == match_id,
     ).order_by(MatchReaction.created_at.desc()))).all()
+    comments = (await db.scalars(select(MatchComment).where(
+        MatchComment.league_id == league_id,
+        MatchComment.match_id == match_id,
+    ).order_by(MatchComment.created_at.desc()).limit(100))).all()
+    author_ids = {item.from_user_id for item in comments}
+    authors = (await db.scalars(select(User).where(User.id.in_(author_ids)))).all() if author_ids else []
+    by_author = {item.id: item for item in authors}
     targets: dict[str, dict] = {}
-    for item in rows:
-        target = targets.setdefault(str(item.target_user_id), {"counts": {}, "mine": []})
+    for item in reactions:
+        target = targets.setdefault(str(item.target_user_id), {"counts": {}, "mine": [], "comments": []})
         target["counts"][item.kind] = int(target["counts"].get(item.kind, 0)) + 1
         if item.from_user_id == user.id:
             target["mine"].append(item.kind)
+    for item in comments:
+        target = targets.setdefault(str(item.target_user_id), {"counts": {}, "mine": [], "comments": []})
+        author = by_author.get(item.from_user_id)
+        if len(target["comments"]) < 5:
+            target["comments"].append({
+                "id": item.id,
+                "text": item.text,
+                "created_at": item.created_at,
+                "from": {
+                    "user_id": item.from_user_id,
+                    "display_name": author.display_name if author else "Участник",
+                    "avatar_url": author.avatar_url if author else None,
+                    "is_mine": item.from_user_id == user.id,
+                },
+            })
     for target in targets.values():
         target["mine"].sort()
     return {"league_id": league_id, "match_id": match_id, "targets": targets}
@@ -118,13 +200,14 @@ async def toggle_match_reaction(
     db: AsyncSession = Depends(get_db),
 ):
     await _membership(league_id, user, db)
-    await _started_match(league_id, match_id, db)
+    _, match = await _started_match(league_id, match_id, db)
     kind = body.kind.strip().lower()
-    if kind not in REACTION_KINDS:
+    if kind not in MATCH_REACTION_KINDS:
         raise HTTPException(422, "Неизвестная реакция")
     if body.target_user_id == user.id:
-        raise HTTPException(422, "Себя подколоть можно и без приложения")
-    await _target_member(league_id, body.target_user_id, db)
+        raise HTTPException(422, "На свой прогноз реагировать нельзя")
+    target = await _target_member(league_id, body.target_user_id, db)
+    prediction = await _target_prediction(match_id, body.target_user_id, db)
     existing = await db.scalar(select(MatchReaction).where(
         MatchReaction.league_id == league_id,
         MatchReaction.match_id == match_id,
@@ -136,16 +219,66 @@ async def toggle_match_reaction(
         await db.delete(existing)
         await db.commit()
         return {"ok": True, "active": False, "kind": kind}
-    db.add(MatchReaction(
+    item = MatchReaction(
         league_id=league_id,
         match_id=match_id,
         from_user_id=user.id,
         target_user_id=body.target_user_id,
         kind=kind,
         created_at=datetime.now(timezone.utc),
-    ))
+    )
+    db.add(item)
     await db.commit()
+    await db.refresh(item)
+    emoji = {
+        "cool": "😎", "laugh": "😂", "smile": "😁", "fire": "🔥",
+        "eyes": "👀", "lion": "🦁", "see_no_evil": "🙈", "hear_no_evil": "🙉",
+    }[kind]
+    await _notify_social(
+        db, target, user, match, prediction,
+        f"social:reaction:{item.id}",
+        "Реакция на прогноз",
+        f"поставил {emoji} на твой прогноз",
+    )
     return {"ok": True, "active": True, "kind": kind}
+
+
+@router.post("/{league_id}/matches/{match_id}/comments")
+async def add_match_comment(
+    league_id: int,
+    match_id: int,
+    body: CommentBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _membership(league_id, user, db)
+    _, match = await _started_match(league_id, match_id, db)
+    if body.target_user_id == user.id:
+        raise HTTPException(422, "Свой прогноз можно обсудить и с собой")
+    target = await _target_member(league_id, body.target_user_id, db)
+    prediction = await _target_prediction(match_id, body.target_user_id, db)
+    text = " ".join(body.text.strip().split())
+    if not text:
+        raise HTTPException(422, "Напиши хоть что-нибудь")
+    item = MatchComment(
+        league_id=league_id,
+        match_id=match_id,
+        from_user_id=user.id,
+        target_user_id=body.target_user_id,
+        text=text,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    preview = text if len(text) <= 90 else text[:87].rstrip() + "…"
+    await _notify_social(
+        db, target, user, match, prediction,
+        f"social:comment:{item.id}",
+        "Комментарий к прогнозу",
+        f"написал: «{preview}»",
+    )
+    return {"ok": True, "comment": {"id": item.id, "text": item.text, "created_at": item.created_at}}
 
 
 @router.get("/{league_id}/reactions")
@@ -217,7 +350,7 @@ async def toggle_reaction(
 ):
     await _membership(league_id, user, db)
     kind = body.kind.strip().lower()
-    if kind not in REACTION_KINDS:
+    if kind not in LEGACY_REACTION_KINDS:
         raise HTTPException(422, "Неизвестная реакция")
     if body.target_user_id == user.id:
         raise HTTPException(422, "Себя подколоть можно и без приложения")
