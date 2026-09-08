@@ -5,6 +5,11 @@ const sheet=modal?.querySelector('.sheet');
 const handle=modal?.querySelector('.handle');
 if(!modal||!box)return;
 let restoring=false,swallowUntil=0,shieldTimer=null;
+let navIntent=false,navIntentTimer=null,suppressHistory=false;
+let wasOpen=modal.classList.contains('open');
+const history=[];
+const htmlDescriptor=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');
+
 function abortMatch(){
   try{document.dispatchEvent(new CustomEvent('gts:force-close-sheet'))}catch{}
   try{if(typeof window.openMatchDetail==='function')window.openMatchDetail(Number.NaN)}catch{}
@@ -16,9 +21,78 @@ function resetSheetMotion(){
   sheet.style.removeProperty('transform');
   sheet.style.removeProperty('transition');
 }
+function clearNavIntent(){
+  navIntent=false;
+  clearTimeout(navIntentTimer);navIntentTimer=null;
+}
+function armNavIntent(){
+  if(!modal.classList.contains('open')||restoring)return;
+  navIntent=true;
+  clearTimeout(navIntentTimer);
+  navIntentTimer=setTimeout(()=>{navIntent=false;navIntentTimer=null},1400);
+}
+function clearHistory(){
+  history.length=0;
+  clearNavIntent();
+  document.dispatchEvent(new CustomEvent('gts:sheet-depth',{detail:{depth:0}}));
+}
+function pushCurrentSheet(){
+  if(!box.childNodes.length)return false;
+  const fragment=document.createDocumentFragment();
+  [...box.childNodes].forEach(node=>fragment.appendChild(node));
+  history.push({
+    fragment,
+    sheetScroll:Number(sheet?.scrollTop)||0,
+    boxScroll:Number(box.scrollTop)||0
+  });
+  if(history.length>20)history.shift();
+  document.dispatchEvent(new CustomEvent('gts:sheet-depth',{detail:{depth:history.length}}));
+  return true;
+}
+function restorePreviousSheet(){
+  if(!history.length||restoring)return false;
+  const frame=history.pop();
+  clearNavIntent();
+  suppressHistory=true;
+  try{
+    if(htmlDescriptor?.set)htmlDescriptor.set.call(box,'');
+    else box.replaceChildren();
+    box.appendChild(frame.fragment);
+  }finally{suppressHistory=false}
+  resetSheetMotion();
+  requestAnimationFrame(()=>{
+    if(sheet)sheet.scrollTop=frame.sheetScroll||0;
+    box.scrollTop=frame.boxScroll||0;
+    document.dispatchEvent(new CustomEvent('gts:sheet-restored',{detail:{depth:history.length}}));
+    document.dispatchEvent(new CustomEvent('gts:sheet-depth',{detail:{depth:history.length}}));
+  });
+  return true;
+}
+
+// Preserve the actual DOM nodes before a user-triggered nested transition replaces
+// #sheetContent. Moving the nodes into a detached fragment keeps their listeners,
+// form state and scroll position intact, so Back restores the real previous screen.
+if(htmlDescriptor?.get&&htmlDescriptor?.set){
+  try{
+    Object.defineProperty(box,'innerHTML',{
+      configurable:true,
+      enumerable:htmlDescriptor.enumerable,
+      get(){return htmlDescriptor.get.call(box)},
+      set(value){
+        if(!suppressHistory&&navIntent&&modal.classList.contains('open')&&box.childNodes.length){
+          pushCurrentSheet();
+          clearNavIntent();
+        }
+        htmlDescriptor.set.call(box,value);
+      }
+    });
+  }catch{}
+}
+
 function finishClose(){
   clearTimeout(shieldTimer);shieldTimer=null;
-  box.innerHTML='';
+  suppressHistory=true;
+  try{box.innerHTML=''}finally{suppressHistory=false}
   resetSheetMotion();
   modal.style.removeProperty('display');
   modal.style.removeProperty('pointer-events');
@@ -29,7 +103,7 @@ function finishClose(){
 }
 function hardClose(){
   if(restoring){armSwallow();return}
-  restoring=true;armSwallow();abortMatch();
+  restoring=true;armSwallow();clearHistory();abortMatch();
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden','true');
   modal.style.setProperty('display','flex','important');
@@ -38,6 +112,10 @@ function hardClose(){
   modal.style.setProperty('background','transparent','important');
   document.body.style.removeProperty('overflow');
   shieldTimer=setTimeout(finishClose,430);
+}
+function requestClose(){
+  if(restorePreviousSheet()){armSwallow(180);return true}
+  hardClose();return true;
 }
 function reopenReady(){
   clearTimeout(shieldTimer);shieldTimer=null;restoring=false;swallowUntil=0;
@@ -48,10 +126,31 @@ function reopenReady(){
   modal.style.removeProperty('background');
   modal.removeAttribute('aria-hidden');
 }
+
 const oldOpen=window.openSheet;
-window.openSheet=function(html){reopenReady();return oldOpen?oldOpen(html):(box.innerHTML=html,modal.classList.add('open'))};
-window.closeSheet=hardClose;
+window.openSheet=function(html){
+  const alreadyOpen=modal.classList.contains('open');
+  reopenReady();
+  if(!alreadyOpen)clearHistory();
+  return oldOpen?oldOpen(html):(box.innerHTML=html,modal.classList.add('open'));
+};
+window.closeSheet=requestClose;
 window.forceCloseSheet=hardClose;
+window.gtsSheetBack=restorePreviousSheet;
+window.gtsSheetCanBack=()=>history.length>0;
+window.gtsSheetDepth=()=>history.length;
+window.gtsResetSheetHistory=clearHistory;
+
+// Any click inside an already open sheet can start a nested view. We only consume
+// the intent when the top-level sheetContent is actually replaced, so ordinary
+// accordions, filters and controls that update their own child nodes do not create
+// fake history entries.
+document.addEventListener('click',e=>{
+  if(!modal.classList.contains('open')||!box.contains(e.target))return;
+  if(e.target?.closest?.('.close,.gts-sheet-close-float,[data-gts-sheet-back]'))return;
+  armNavIntent();
+},true);
+
 function consume(e){
   if(!swallowActive())return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation?.();
@@ -62,19 +161,19 @@ for(const ev of ['pointerdown','touchstart','touchend','click']){
     const close=e.target?.closest?.('#modal .close');
     if(!close)return;
     e.preventDefault();e.stopPropagation();e.stopImmediatePropagation?.();
-    armSwallow();hardClose();
+    armSwallow();requestClose();
   },true);
 }
 for(const ev of ['pointerdown','touchstart','click']){
   modal.addEventListener(ev,e=>{
     if(e.target!==modal)return;
     e.preventDefault();e.stopPropagation();e.stopImmediatePropagation?.();
-    armSwallow();hardClose();
+    armSwallow();requestClose();
   },true);
 }
 if(sheet&&handle){
   handle.setAttribute('role','button');
-  handle.setAttribute('aria-label','Потянуть вниз, чтобы закрыть');
+  handle.setAttribute('aria-label','Потянуть вниз, чтобы вернуться или закрыть');
   handle.style.setProperty('touch-action','none');
   handle.style.setProperty('cursor','grab');
   handle.style.setProperty('padding','12px 34px');
@@ -109,7 +208,7 @@ if(sheet&&handle){
     const velocity=distance/elapsed;
     dragging=false;handle.style.cursor='grab';
     try{handle.releasePointerCapture(e.pointerId)}catch{}
-    if(distance>=85||velocity>=0.55){armSwallow();hardClose()}else springBack();
+    if(distance>=85||velocity>=0.55){armSwallow();requestClose()}else springBack();
     e.preventDefault();e.stopPropagation();
   }
   handle.addEventListener('pointerdown',begin);
@@ -117,6 +216,11 @@ if(sheet&&handle){
   handle.addEventListener('pointerup',end);
   handle.addEventListener('pointercancel',end);
 }
-new MutationObserver(()=>{if(modal.classList.contains('open'))reopenReady()}).observe(modal,{attributes:true,attributeFilter:['class']});
+new MutationObserver(()=>{
+  const open=modal.classList.contains('open');
+  if(open&&!wasOpen){reopenReady();clearHistory()}
+  if(!open&&wasOpen&&!restoring)clearHistory();
+  wasOpen=open;
+}).observe(modal,{attributes:true,attributeFilter:['class']});
 })();
 (()=>{if(document.querySelector('script[data-gts-club-player-details]'))return;const s=document.createElement('script');s.src='/static/club-player-details.js?v=1';s.defer=true;s.dataset.gtsClubPlayerDetails='1';document.head.appendChild(s)})();
