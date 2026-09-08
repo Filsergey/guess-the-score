@@ -52,17 +52,17 @@ class Settings(BaseSettings):
     openai_oracle_model: str = "gpt-5-mini"
     openai_oracle_enabled: bool = True
 
-    # Oracle now checks local/SStats context first and calls OpenAI only for a new
-    # match or when the context hash changed. Far-away matches are checked rarely.
-    oracle_scheduler_enabled: bool = True
+    # OpenAI is no longer driven by a polling scheduler. Initial forecasts are
+    # created by league/match creation events; delta refreshes are user-driven.
+    oracle_scheduler_enabled: bool = False
     oracle_scheduler_interval_minutes: int = 60
     oracle_scheduler_batch_size: int = 5
     oracle_scheduler_max_batches: int = 4
     oracle_scheduler_hours_ahead: int = 120
 
-    # Expensive web search is isolated to shared team news. One cached team result
-    # is reused by every match involving that team.
-    oracle_news_enabled: bool = True
+    # Kept only for environment compatibility. Oracle no longer performs news,
+    # injuries or web_search requests.
+    oracle_news_enabled: bool = False
     oracle_news_window_hours: int = 12
     oracle_news_refresh_hours: int = 12
     oracle_news_final_refresh_hours: int = 4
