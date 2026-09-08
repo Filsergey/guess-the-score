@@ -31,7 +31,7 @@ def ensure_nav_icons(static_dir: Path) -> None:
         "matches": svg(
             '<circle cx="64" cy="64" r="39" stroke-width="8"/>'
             '<path d="M64 47 80 58 74 77H54L48 58Z" stroke-width="6"/>'
-            '<path d="M64 47V29M80 58l18-5M74 77l11 16M54 77 43 16M48 58l-18-5" '
+            '<path d="M64 47V29M80 58l18-5M74 77l11 16M54 77l-11 16M48 58l-18-5" '
             'stroke-width="5"/>'
         ),
         "leagues": svg(
