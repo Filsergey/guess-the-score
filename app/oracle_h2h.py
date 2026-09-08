@@ -192,8 +192,12 @@ async def _match_context_with_weighted_h2h(match, db):
     # receives only compact server-computed metrics, which is cheaper and prevents
     # ancient H2H from being overinterpreted.
     snapshot = dict(ctx.get("snapshot") or {})
-    snapshot.pop("head_to_head_matches", None)
-    snapshot["head_to_head"] = metrics
+    if rows:
+        snapshot.pop("head_to_head_matches", None)
+        snapshot["head_to_head"] = metrics
+    # With no H2H rows keep the original empty-list snapshot unchanged. This
+    # avoids a one-time DELTA/OpenAI refresh merely because the representation
+    # changed, while an empty list costs essentially nothing in future prompts.
     ctx["snapshot"] = snapshot
     ctx["context_hash"] = oracle._canonical_hash(snapshot)
     return ctx
