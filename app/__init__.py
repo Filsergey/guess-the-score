@@ -92,6 +92,7 @@ from app.oracle_bookmaker_panel import install_bookmaker_panel
 from app.oracle_enrichment import install_oracle_enrichment
 from app.oracle_explanations import install_oracle_explanations
 from app.oracle_openai_structured import install_structured_oracle_openai
+from app.oracle_recent_matches import install_oracle_recent_matches
 from app.oracle_usage_trace import activity_router as _oracle_activity_router
 from app.oracle_usage_trace import install_oracle_usage_trace
 from app.services.oracle_events import install_oracle_event_hooks
@@ -100,6 +101,9 @@ _oracle_router.include_router(_openai_admin_router)
 _oracle_router.include_router(_oracle_activity_router)
 install_openai_usage_tracking()
 install_oracle_enrichment()
+# Fill concrete recent fixtures from SStats before the stable bookmaker wrapper
+# computes the final analytical context hash.
+install_oracle_recent_matches()
 install_bookmaker_panel()
 install_structured_oracle_openai()
 install_oracle_explanations()
