@@ -1,5 +1,5 @@
 (()=>{
-  const STYLE_ID='gts-sheet-close-style-v5';
+  const STYLE_ID='gts-sheet-close-style-v6';
   const ANCHOR_CLASS='gts-sheet-close-anchor';
   const BUTTON_CLASS='gts-sheet-close-float';
   const SPACE_CLASS='gts-sheet-close-space';
@@ -81,6 +81,9 @@
   }
 
   function closeCurrentSheet(){
+    try{
+      if(typeof window.gtsSheetBack==='function'&&window.gtsSheetBack())return;
+    }catch{}
     try{
       if(typeof window.gtsTrySheetBack==='function'&&window.gtsTrySheetBack())return;
     }catch{}
