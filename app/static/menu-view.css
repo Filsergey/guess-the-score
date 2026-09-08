@@ -73,7 +73,7 @@
   font-weight: 800;
 }
 
-/* Compact neon bottom navigation. */
+/* Compact neon bottom navigation. Icon hue follows the active league/header accent. */
 .nav {
   padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
 }
@@ -95,25 +95,32 @@
   width: 22px;
   height: 22px;
   flex: 0 0 22px;
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: contain;
-  opacity: .48;
-  filter: saturate(.48) brightness(.82);
+  background: var(--gts-accent, #268fff);
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  opacity: .38;
   transition: opacity .16s ease, filter .16s ease, transform .16s ease;
+}
+
+.nav button.active {
+  color: var(--gts-accent, #58aaff);
 }
 
 .nav button.active::before {
   opacity: 1;
-  filter: saturate(1.15) brightness(1.08) drop-shadow(0 0 5px rgba(80, 224, 255, .62));
+  filter: drop-shadow(0 0 5px rgba(var(--gts-accent-rgb, 38, 143, 255), .72));
   transform: translateY(-1px) scale(1.04);
 }
 
-#navHome::before { background-image: url('/static/nav-icons/home.webp?v=4'); }
-#navMatches::before { background-image: url('/static/nav-icons/matches.webp?v=4'); }
-#navLeagues::before { background-image: url('/static/nav-icons/leagues.webp?v=4'); }
-#navTable::before { background-image: url('/static/nav-icons/table.webp?v=4'); }
-#navMenu::before { background-image: url('/static/nav-icons/settings.webp?v=4'); }
+#navHome::before { -webkit-mask-image: url('/static/nav-icons/home.webp?v=5'); mask-image: url('/static/nav-icons/home.webp?v=5'); }
+#navMatches::before { -webkit-mask-image: url('/static/nav-icons/matches.webp?v=5'); mask-image: url('/static/nav-icons/matches.webp?v=5'); }
+#navLeagues::before { -webkit-mask-image: url('/static/nav-icons/leagues.webp?v=5'); mask-image: url('/static/nav-icons/leagues.webp?v=5'); }
+#navTable::before { -webkit-mask-image: url('/static/nav-icons/table.webp?v=5'); mask-image: url('/static/nav-icons/table.webp?v=5'); }
+#navMenu::before { -webkit-mask-image: url('/static/nav-icons/settings.webp?v=5'); mask-image: url('/static/nav-icons/settings.webp?v=5'); }
 
 /* The underlying legacy button still says «Меню»; visually this tab is now «Настройки». */
 #navMenu { font-size: 0; }
@@ -122,6 +129,7 @@
   font-size: 11px;
   line-height: normal;
 }
+#navMenu.active::after { color: var(--gts-accent, #58aaff); }
 
 /* Keep the owner badge readable on light/custom league backgrounds. */
 .league-owner {
