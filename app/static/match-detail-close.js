@@ -1,31 +1,33 @@
 (()=>{
-  const STYLE_ID='gts-match-detail-close-style-v3';
-  const BUTTON_CLASS='gts-match-detail-close-float';
+  const STYLE_ID='gts-sheet-close-style-v4';
+  const ANCHOR_CLASS='gts-sheet-close-anchor';
+  const BUTTON_CLASS='gts-sheet-close-float';
+  const SPACE_CLASS='gts-sheet-close-space';
 
   function ensureStyle(){
     if(document.getElementById(STYLE_ID))return;
     const style=document.createElement('style');
     style.id=STYLE_ID;
     style.textContent=`
-      .gts-match-detail-close-anchor{position:sticky;top:8px;height:0;z-index:80;pointer-events:none}
-      .gts-match-detail-close-float{position:absolute;right:2px;top:0;width:40px;height:40px;border-radius:50%;border:1px solid rgba(var(--gts-accent-rgb,36,164,255),.34);background:rgba(6,18,30,.88);color:#fff;display:grid;place-items:center;padding:0;box-shadow:0 8px 24px rgba(0,0,0,.34);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-size:27px;font-weight:400;line-height:1;cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}
-      .gts-match-detail-close-float:active{transform:scale(.94)}
-      #sheetContent [data-match-detail-id]{padding-top:46px}
+      .${ANCHOR_CLASS}{position:sticky;top:8px;height:0;z-index:90;pointer-events:none}
+      .${BUTTON_CLASS}{position:absolute;right:2px;top:0;width:40px;height:40px;border-radius:50%;border:1px solid rgba(var(--gts-accent-rgb,36,164,255),.34);background:rgba(6,18,30,.88);color:#fff;display:grid;place-items:center;padding:0;box-shadow:0 8px 24px rgba(0,0,0,.34);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);font-size:27px;font-weight:400;line-height:1;cursor:pointer;pointer-events:auto;-webkit-tap-highlight-color:transparent}
+      .${BUTTON_CLASS}:active{transform:scale(.94)}
+      #sheetContent.${SPACE_CLASS}{padding-top:44px!important}
       #sheetContent [data-match-detail-id] .sheet-round{padding-left:48px;padding-right:48px}
       #sheetContent [data-match-detail-id] .match-detail-head{grid-template-columns:minmax(0,1fr) 96px minmax(0,1fr);gap:8px}
       #sheetContent [data-match-detail-id] .match-detail-team{min-width:0;overflow-wrap:anywhere}
       #sheetContent [data-match-detail-id] .match-detail-score{min-width:0}
       .gts-match-detail-date{margin:0 0 5px;font-size:11px;font-weight:750;line-height:1.2;letter-spacing:.02em;color:var(--gts-muted,#8fa4b9);white-space:nowrap;text-align:center}
       @media (max-width:430px){
-        #sheetContent [data-match-detail-id]{padding-top:44px}
+        #sheetContent.${SPACE_CLASS}{padding-top:42px!important}
         #sheetContent [data-match-detail-id] .match-detail-head{grid-template-columns:minmax(0,1fr) 92px minmax(0,1fr);gap:6px}
         #sheetContent [data-match-detail-id] .match-detail-team{font-size:12px}
         #sheetContent [data-match-detail-id] .match-detail-team img,#sheetContent [data-match-detail-id] .match-detail-team .crest{width:60px;height:60px}
       }
-      html[data-gts-tournament-theme='laliga'] .gts-match-detail-close-float,
-      html[data-gts-tournament-theme='epl'] .gts-match-detail-close-float,
-      html[data-gts-tournament-theme='seriea'] .gts-match-detail-close-float,
-      html[data-gts-tournament-theme='bundesliga'] .gts-match-detail-close-float{background:rgba(255,255,255,.94);color:#111;border-color:#d8d8d8}
+      html[data-gts-tournament-theme='laliga'] .${BUTTON_CLASS},
+      html[data-gts-tournament-theme='epl'] .${BUTTON_CLASS},
+      html[data-gts-tournament-theme='seriea'] .${BUTTON_CLASS},
+      html[data-gts-tournament-theme='bundesliga'] .${BUTTON_CLASS}{background:rgba(255,255,255,.94);color:#111;border-color:#d8d8d8}
     `;
     document.head.appendChild(style);
   }
@@ -37,8 +39,9 @@
     return date.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'});
   }
 
-  function decorateDetail(detail){
-    const id=Number(detail?.dataset?.matchDetailId);
+  function decorateMatchDetail(detail){
+    if(!detail)return;
+    const id=Number(detail.dataset?.matchDetailId);
     if(!Number.isFinite(id))return;
     const base=window.GTS?.match?.(id);
     const value=formatMatchDate(base?.kickoff_at);
@@ -55,13 +58,43 @@
     if(node.textContent!==value)node.textContent=value;
   }
 
-  function closeDetail(){
-    const close=document.querySelector('#sheetContent [data-match-detail-id] [data-md-close]');
-    if(close){close.click();return}
+  function findNativeClose(content){
+    if(!content)return null;
+    const selectors=[
+      '[data-md-close]',
+      '[data-sheet-close]',
+      '[data-close-sheet]',
+      'button.close',
+      'button[aria-label="Закрыть"]',
+      'button[aria-label="Закрыть окно"]'
+    ];
+    for(const selector of selectors){
+      const node=content.querySelector(selector);
+      if(node&&!node.classList.contains(BUTTON_CLASS))return node;
+    }
+    const buttons=[...content.querySelectorAll('button')];
+    return buttons.find(node=>{
+      if(node.classList.contains(BUTTON_CLASS))return false;
+      const text=(node.textContent||'').trim().toLocaleLowerCase('ru-RU');
+      return text==='закрыть'||text==='close';
+    })||null;
+  }
+
+  function closeCurrentSheet(){
+    const content=document.getElementById('sheetContent');
+    const nativeClose=findNativeClose(content);
+    if(nativeClose){nativeClose.click();return}
+    if(typeof window.closeSheet==='function'){window.closeSheet();return}
     document.dispatchEvent(new CustomEvent('gts:force-close-sheet'));
     if(typeof window.forceCloseSheet==='function'){window.forceCloseSheet();return}
     const modal=document.getElementById('modal');
     modal?.classList.remove('open');
+  }
+
+  function hasSheetContent(modal,content){
+    if(!modal?.classList.contains('open'))return false;
+    if(!content)return false;
+    return content.childElementCount>0||Boolean((content.textContent||'').trim());
   }
 
   function sync(){
@@ -70,19 +103,29 @@
     const sheet=modal?.querySelector('.sheet');
     const content=document.getElementById('sheetContent');
     if(!modal||!sheet||!content)return;
+
     const detail=content.querySelector('[data-match-detail-id]');
-    let anchor=sheet.querySelector(':scope > .gts-match-detail-close-anchor');
-    if(!detail){anchor?.remove();return}
-    decorateDetail(detail);
+    decorateMatchDetail(detail);
+
+    let anchor=sheet.querySelector(`:scope > .${ANCHOR_CLASS}`);
+    const active=hasSheetContent(modal,content);
+    content.classList.toggle(SPACE_CLASS,active);
+
+    if(!active){anchor?.remove();return}
     if(anchor)return;
+
     anchor=document.createElement('div');
-    anchor.className='gts-match-detail-close-anchor';
+    anchor.className=ANCHOR_CLASS;
     const button=document.createElement('button');
     button.type='button';
     button.className=BUTTON_CLASS;
-    button.setAttribute('aria-label','Закрыть окно матча');
+    button.setAttribute('aria-label','Закрыть окно');
     button.innerHTML='&times;';
-    button.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();closeDetail()});
+    button.addEventListener('click',e=>{
+      e.preventDefault();
+      e.stopPropagation();
+      closeCurrentSheet();
+    });
     anchor.appendChild(button);
     sheet.insertBefore(anchor,content);
   }
