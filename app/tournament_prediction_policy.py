@@ -1,10 +1,13 @@
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from fastapi import Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.tournament_predictions as tp
+from app.auth import get_current_user
 from app.competitions.champions_league import classify_ucl_round
+from app.database import get_db
 from app.models import LeagueMember, Match, Player, Tournament, TournamentPrediction, User, UserLeague
 
 _INSTALLED = False
@@ -87,7 +90,11 @@ async def _scope_prediction(db, user_id: int, provider: str, season: int, tourna
     return await db.scalar(stmt)
 
 
-async def league_predictions_after_save(league_id: int, user: User, db):
+async def league_predictions_after_save(
+    league_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     league = await db.get(UserLeague, league_id)
     if league is None:
         raise HTTPException(404, "Лига не найдена")
@@ -183,7 +190,14 @@ async def league_predictions_after_save(league_id: int, user: User, db):
     return {**base, "count": len(items), "response": items}
 
 
-async def save_once(body, provider: str, season: int, tournament_id: int | None, user: User, db):
+async def save_once(
+    body: tp.TournamentPredictionBody,
+    provider: str = "sstats",
+    season: int = 2026,
+    tournament_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if tournament_id is not None:
         tournament = await db.get(Tournament, tournament_id)
         if not tournament or tournament.provider != provider:
