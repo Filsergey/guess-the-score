@@ -48,6 +48,20 @@ try:
 except Exception:
     pass
 
+# renderUsage() marks menuView as the usage page. Settings later reuses the same
+# root, so clear that stale state and restore the admin tabs after navigation.
+usage_nav_fix_marker = "gts-admin-openai-nav-fix-v1"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if usage_nav_fix_marker not in html:
+        script = (
+            f'<script id="{usage_nav_fix_marker}" '
+            'src="/static/admin-openai-nav-fix.js?v=1"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
 # Add a separate trace overlay so admins can see WHY an OpenAI call happened,
 # including cache hits that cost $0, without changing the existing cost dashboard.
 trace_script_marker = "gts-admin-openai-trace-v1"
