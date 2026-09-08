@@ -27,6 +27,14 @@ DEFAULT_NOTIFICATION_PREFERENCES={
 }
 SERVICE_STARTED_AT=datetime.now(timezone.utc)
 ADMIN_PWA_TEST_EVENT='manual:pwa-test:2026-09-08-v1'
+QUALIFYING_ROUND_MARKERS=(
+    'qualif',
+    'qualifying',
+    'qualification',
+    'preliminary',
+    'квалиф',
+    'отбор',
+)
 FACTS=[
     'Первый чемпионат мира прошёл в 1930 году в Уругвае.',
     'Размер футбольных ворот — 7,32 × 2,44 метра.',
@@ -36,6 +44,11 @@ FACTS=[
     'Финал чемпионата мира 1950 года на «Маракане» собрал одну из крупнейших аудиторий в истории футбола.',
     'Традиционный футбольный матч длится 90 минут: два тайма по 45.',
 ]
+
+
+def _is_qualifying_match(match:Match)->bool:
+    round_name=(match.round_name or '').strip().lower()
+    return any(marker in round_name for marker in QUALIFYING_ROUND_MARKERS)
 
 
 def normalize_preferences(value:str|dict|None)->dict:
@@ -134,7 +147,7 @@ async def _match_names(db:AsyncSession,match:Match)->tuple[str,str]:
 async def notify_prediction_activity(actor_id:int,match_id:int)->None:
     async with SessionLocal() as db:
         actor=await db.get(User,actor_id);match=await db.get(Match,match_id)
-        if not actor or not match:return
+        if not actor or not match or _is_qualifying_match(match):return
         home,away=await _match_names(db,match);rows=await _league_members_for_match(db,match);seen=set();chats=set()
         for league,user in rows:
             if user.id!=actor.id and user.id not in seen:
@@ -162,6 +175,7 @@ async def notify_tournament_activity(actor_id:int,tournament_id:int|None,season:
 async def _process_reminders(db:AsyncSession,now:datetime)->None:
     matches=(await db.execute(select(Match).where(Match.kickoff_at>=now+timedelta(minutes=50),Match.kickoff_at<=now+timedelta(minutes=70)))).scalars().all()
     for match in matches:
+        if _is_qualifying_match(match):continue
         home,away=await _match_names(db,match)
         for _,user in await _league_members_for_match(db,match):
             pred=await db.scalar(select(Prediction).where(Prediction.user_id==user.id,Prediction.match_id==match.id))
@@ -171,6 +185,7 @@ async def _process_reminders(db:AsyncSession,now:datetime)->None:
 async def _process_starts(db:AsyncSession,now:datetime)->None:
     matches=(await db.execute(select(Match).where(Match.kickoff_at>=now-timedelta(minutes=8),Match.kickoff_at<=now+timedelta(minutes=1)))).scalars().all()
     for match in matches:
+        if _is_qualifying_match(match):continue
         home,away=await _match_names(db,match)
         for _,user in await _league_members_for_match(db,match):
             await deliver_to_user(db,user,f'start:{match.id}','match_start','Матч начался',f'{home} — {away}. Прогнозы участников теперь открыты.',f'/?match={match.id}')
@@ -178,7 +193,7 @@ async def _process_starts(db:AsyncSession,now:datetime)->None:
 async def _process_results(db:AsyncSession,now:datetime)->None:
     matches=(await db.execute(select(Match).where(Match.updated_at>=max(SERVICE_STARTED_AT-timedelta(minutes=2),now-timedelta(minutes=12))))).scalars().all()
     for match in matches:
-        if not is_final_status(match.status_short):continue
+        if _is_qualifying_match(match) or not is_final_status(match.status_short):continue
         home,away=await _match_names(db,match);score=f'{match.home_goals}:{match.away_goals}'
         for _,user in await _league_members_for_match(db,match):
             pred=await db.scalar(select(Prediction).where(Prediction.user_id==user.id,Prediction.match_id==match.id));points=0
@@ -204,7 +219,7 @@ async def _daily_for_user(db:AsyncSession,user:User,now:datetime)->None:
     tournament_ids={x.tournament_id for x in leagues if x.tournament_id};providers={(x.tournament_provider,x.tournament_season) for x in leagues}
     start=datetime.combine(local.date(),datetime.min.time(),tzinfo=tz).astimezone(timezone.utc);end=start+timedelta(days=1)
     stmt=select(Match).where(Match.kickoff_at>=start,Match.kickoff_at<end)
-    matches=(await db.execute(stmt.order_by(Match.kickoff_at))).scalars().all();matches=[m for m in matches if (m.tournament_id in tournament_ids) or ((m.provider,m.season) in providers)]
+    matches=(await db.execute(stmt.order_by(Match.kickoff_at))).scalars().all();matches=[m for m in matches if not _is_qualifying_match(m) and ((m.tournament_id in tournament_ids) or ((m.provider,m.season) in providers))]
     if matches:
         lines=[]
         for m in matches[:5]:
