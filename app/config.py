@@ -53,7 +53,9 @@ class Settings(BaseSettings):
     openai_oracle_enabled: bool = True
 
     # OpenAI is no longer driven by a polling scheduler. Initial forecasts are
-    # created by league/match creation events; delta refreshes are user-driven.
+    # created only when a match reaches this pre-kickoff window (or a user opens
+    # the prediction earlier); delta refreshes are user-driven.
+    oracle_initial_window_hours: int = 72
     oracle_scheduler_enabled: bool = False
     oracle_scheduler_interval_minutes: int = 60
     oracle_scheduler_batch_size: int = 5
