@@ -85,6 +85,22 @@ try:
 except Exception:
     pass
 
+# Fair tournament-prediction flow: the form stays open until the Round of 16,
+# a prediction becomes immutable after its first save, and other users' picks are
+# revealed only after the viewer has committed their own prediction.
+tournament_prediction_policy_marker = "gts-tournament-prediction-policy-v2"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if tournament_prediction_policy_marker not in html:
+        script = (
+            f'<script id="{tournament_prediction_policy_marker}" '
+            'src="/static/tournament-prediction-policy-v2.js?v=1" '
+            'data-gts-tournament-prediction-policy="2"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
 from app.openai_usage import admin_router as _openai_admin_router
 from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
@@ -96,6 +112,7 @@ from app.oracle_recent_matches import install_oracle_recent_matches
 from app.oracle_usage_trace import activity_router as _oracle_activity_router
 from app.oracle_usage_trace import install_oracle_usage_trace
 from app.services.oracle_events import install_oracle_event_hooks
+from app.tournament_prediction_policy import install_tournament_prediction_policy
 
 _oracle_router.include_router(_openai_admin_router)
 _oracle_router.include_router(_oracle_activity_router)
@@ -109,3 +126,4 @@ install_structured_oracle_openai()
 install_oracle_explanations()
 install_oracle_usage_trace()
 install_oracle_event_hooks()
+install_tournament_prediction_policy()
