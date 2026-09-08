@@ -101,14 +101,14 @@ try:
 except Exception:
     pass
 
-match_detail_close_marker = "gts-match-detail-close-v2"
+match_detail_close_marker = "gts-match-detail-close-v3"
 try:
     html = index_path.read_text(encoding="utf-8")
     if match_detail_close_marker not in html:
         script = (
             f'<script id="{match_detail_close_marker}" '
-            'src="/static/match-detail-close.js?v=2" '
-            'data-gts-match-detail-close="2"></script>'
+            'src="/static/match-detail-close.js?v=3" '
+            'data-gts-match-detail-close="3"></script>'
         )
         index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
 except Exception:
