@@ -22,6 +22,8 @@ class PreferencesBody(BaseModel):
     match_results:bool|None=None
     daily_digest:bool|None=None
     match_videos:bool|None=None
+    channel_pwa:bool|None=None
+    channel_telegram:bool|None=None
     timezone:str|None=Field(default=None,max_length=80)
 
 class LeagueChatBody(BaseModel):
@@ -37,22 +39,32 @@ def _raw(profile:UserProfile|None)->dict:
     try:return json.loads(profile.notification_preferences or '{}') if profile else {}
     except Exception:return {}
 
+def _channels(raw:dict)->dict:
+    return {
+        'pwa':bool(raw.get('_channel_pwa',True)),
+        'telegram':bool(raw.get('_channel_telegram',True)),
+    }
+
 @router.get('/preferences')
 async def get_preferences(user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
     p=await _profile(db,user.id);raw=_raw(p);prefs=normalize_preferences(raw)
-    return {'preferences':prefs,'timezone':raw.get('_timezone') or 'Europe/Moscow'}
+    return {'preferences':prefs,'channels':_channels(raw),'timezone':raw.get('_timezone') or 'Europe/Moscow'}
 
 @router.put('/preferences')
 async def put_preferences(body:PreferencesBody,user:User=Depends(get_current_user),db:AsyncSession=Depends(get_db))->dict:
     p=await _profile(db,user.id,True);raw=_raw(p);prefs=normalize_preferences(raw)
     supplied=body.model_dump(exclude_none=True)
     tz=supplied.pop('timezone',None)
+    channel_pwa=supplied.pop('channel_pwa',None)
+    channel_telegram=supplied.pop('channel_telegram',None)
     for key,value in supplied.items():
         if key in DEFAULT_NOTIFICATION_PREFERENCES:prefs[key]=bool(value)
     if tz:raw['_timezone']=tz.strip() or 'Europe/Moscow'
+    if channel_pwa is not None:raw['_channel_pwa']=bool(channel_pwa)
+    if channel_telegram is not None:raw['_channel_telegram']=bool(channel_telegram)
     raw.update(prefs);p.notification_preferences=json.dumps(raw,ensure_ascii=False);p.updated_at=datetime.now(timezone.utc)
     await db.commit();await db.refresh(p)
-    return {'preferences':prefs,'timezone':raw.get('_timezone') or 'Europe/Moscow'}
+    return {'preferences':prefs,'channels':_channels(raw),'timezone':raw.get('_timezone') or 'Europe/Moscow'}
 
 async def _owner_league(db:AsyncSession,league_id:int,user:User)->UserLeague:
     league=await db.get(UserLeague,league_id)
