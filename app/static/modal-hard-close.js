@@ -30,9 +30,6 @@ function finishClose(){
 function hardClose(){
   if(restoring){armSwallow();return}
   restoring=true;armSwallow();abortMatch();
-  /* Keep an invisible full-screen shield for the rest of this touch/click gesture.
-     If the backdrop disappears on pointerdown, Telegram/iOS can deliver the
-     following click to the match/card/navigation underneath it. */
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden','true');
   modal.style.setProperty('display','flex','important');
@@ -59,7 +56,6 @@ function consume(e){
   if(!swallowActive())return;
   e.preventDefault();e.stopPropagation();e.stopImmediatePropagation?.();
 }
-/* Capture the tail of a mobile gesture after the modal has started closing. */
 for(const ev of ['pointerup','mouseup','touchend','click'])document.addEventListener(ev,consume,true);
 for(const ev of ['pointerdown','touchstart','touchend','click']){
   document.addEventListener(ev,e=>{
@@ -69,8 +65,6 @@ for(const ev of ['pointerdown','touchstart','touchend','click']){
     armSwallow();hardClose();
   },true);
 }
-/* A tap outside the sheet only closes the sheet. It must never activate whatever
-   happened to be under the finger in the main interface. */
 for(const ev of ['pointerdown','touchstart','click']){
   modal.addEventListener(ev,e=>{
     if(e.target!==modal)return;
@@ -78,20 +72,15 @@ for(const ev of ['pointerdown','touchstart','click']){
     armSwallow();hardClose();
   },true);
 }
-
-/* The visible grabber is a real drag handle now. Dragging it down moves the
-   entire bottom sheet; a short/slow drag springs back, a decisive swipe closes. */
 if(sheet&&handle){
   handle.setAttribute('role','button');
   handle.setAttribute('aria-label','Потянуть вниз, чтобы закрыть');
   handle.style.setProperty('touch-action','none');
   handle.style.setProperty('cursor','grab');
-  /* Keep the same 42x4 visual line but make its touch target comfortably large. */
   handle.style.setProperty('padding','12px 34px');
   handle.style.setProperty('margin','-8px auto 6px');
   handle.style.setProperty('box-sizing','content-box');
   handle.style.setProperty('background-clip','content-box');
-
   let dragging=false,startY=0,lastY=0,startAt=0,lastAt=0,distance=0;
   function springBack(){
     sheet.style.transition='transform .22s cubic-bezier(.2,.8,.2,1)';
@@ -120,9 +109,7 @@ if(sheet&&handle){
     const velocity=distance/elapsed;
     dragging=false;handle.style.cursor='grab';
     try{handle.releasePointerCapture(e.pointerId)}catch{}
-    if(distance>=85||velocity>=0.55){
-      armSwallow();hardClose();
-    }else springBack();
+    if(distance>=85||velocity>=0.55){armSwallow();hardClose()}else springBack();
     e.preventDefault();e.stopPropagation();
   }
   handle.addEventListener('pointerdown',begin);
@@ -130,6 +117,6 @@ if(sheet&&handle){
   handle.addEventListener('pointerup',end);
   handle.addEventListener('pointercancel',end);
 }
-
 new MutationObserver(()=>{if(modal.classList.contains('open'))reopenReady()}).observe(modal,{attributes:true,attributeFilter:['class']});
 })();
+(()=>{if(document.querySelector('script[data-gts-club-player-details]'))return;const s=document.createElement('script');s.src='/static/club-player-details.js?v=1';s.defer=true;s.dataset.gtsClubPlayerDetails='1';document.head.appendChild(s)})();
