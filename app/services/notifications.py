@@ -25,6 +25,7 @@ DEFAULT_NOTIFICATION_PREFERENCES={
     'daily_digest':False,
     'match_videos':False,
 }
+DEFAULT_NOTIFICATION_CHANNELS={'pwa':True,'telegram':True}
 SERVICE_STARTED_AT=datetime.now(timezone.utc)
 ADMIN_PWA_TEST_EVENT='manual:pwa-test:2026-09-08-v1'
 QUALIFYING_ROUND_MARKERS=(
@@ -51,16 +52,31 @@ def _is_qualifying_match(match:Match)->bool:
     return any(marker in round_name for marker in QUALIFYING_ROUND_MARKERS)
 
 
+def _raw_preferences(value:str|dict|None)->dict:
+    if isinstance(value,dict):return value
+    try:return json.loads(value or '{}')
+    except Exception:return {}
+
+
 def normalize_preferences(value:str|dict|None)->dict:
-    if isinstance(value,dict):raw=value
-    else:
-        try:raw=json.loads(value or '{}')
-        except Exception:raw={}
+    raw=_raw_preferences(value)
     return {k:(bool(raw[k]) if k in raw else v) for k,v in DEFAULT_NOTIFICATION_PREFERENCES.items()}
+
+
+def normalize_channels(value:str|dict|None)->dict:
+    raw=_raw_preferences(value)
+    return {
+        'pwa':bool(raw.get('_channel_pwa',DEFAULT_NOTIFICATION_CHANNELS['pwa'])),
+        'telegram':bool(raw.get('_channel_telegram',DEFAULT_NOTIFICATION_CHANNELS['telegram'])),
+    }
 
 async def user_preferences(db:AsyncSession,user_id:int)->dict:
     profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user_id))
     return normalize_preferences(profile.notification_preferences if profile else None)
+
+async def user_channels(db:AsyncSession,user_id:int)->dict:
+    profile=await db.scalar(select(UserProfile).where(UserProfile.user_id==user_id))
+    return normalize_channels(profile.notification_preferences if profile else None)
 
 async def _already_sent(db:AsyncSession,user_id:int,event_key:str,channel:str)->bool:
     return await db.scalar(select(NotificationDelivery.id).where(NotificationDelivery.user_id==user_id,NotificationDelivery.event_key==event_key,NotificationDelivery.channel==channel)) is not None
@@ -88,8 +104,9 @@ async def _send_telegram(chat_id:int|str,text:str)->bool:
 async def deliver_to_user(db:AsyncSession,user:User,event_key:str,pref_key:str,title:str,body:str,url:str='/',telegram_text:str|None=None)->dict:
     prefs=await user_preferences(db,user.id)
     if not prefs.get(pref_key,False):return {'push':0,'telegram':0,'skipped':'preference'}
+    channels=await user_channels(db,user.id)
     sent_push=0;sent_tg=0
-    if not await _already_sent(db,user.id,event_key,'push'):
+    if channels.get('pwa',True) and not await _already_sent(db,user.id,event_key,'push'):
         subs=(await db.execute(select(PushSubscription).where(PushSubscription.user_id==user.id))).scalars().all()
         stale=[]
         for sub in subs:
@@ -103,7 +120,7 @@ async def deliver_to_user(db:AsyncSession,user:User,event_key:str,pref_key:str,t
         for sub in stale:await db.delete(sub)
         if sent_push or stale:await db.commit()
         if sent_push:await _mark_sent(db,user.id,event_key,'push')
-    if user.telegram_id and not await _already_sent(db,user.id,event_key,'telegram'):
+    if channels.get('telegram',True) and user.telegram_id and not await _already_sent(db,user.id,event_key,'telegram'):
         ok=await _send_telegram(user.telegram_id,telegram_text or f'{title}\n{body}')
         if ok:
             sent_tg=1;await _mark_sent(db,user.id,event_key,'telegram')
