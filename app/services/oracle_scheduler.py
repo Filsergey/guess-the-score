@@ -7,21 +7,20 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.models import Match, OraclePrediction
-from app.oracle import _match_context, _needs_refresh, _save_cache, _web_oracle_batch
+from app.oracle import _needs_refresh, generate_or_refresh_matches
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
 async def generate_due_oracle_predictions() -> dict:
-    """Generate/refresh cached Oracle predictions for matches approaching kickoff."""
+    """Check upcoming match context and call OpenAI only for initial/delta analysis."""
     if not settings.openai_oracle_enabled or not settings.openai_api_key:
         return {"generated": 0, "reason": "openai-disabled"}
 
     now = datetime.now(timezone.utc)
     end = now + timedelta(hours=settings.oracle_scheduler_hours_ahead)
-    total_generated = 0
-    total_requested = 0
+    totals = {"requested": 0, "generated": 0, "unchanged": 0, "local_only": 0, "ai_requested": 0}
 
     for _ in range(settings.oracle_scheduler_max_batches):
         async with SessionLocal() as db:
@@ -48,26 +47,16 @@ async def generate_due_oracle_predictions() -> dict:
             if not selected:
                 break
 
-            total_requested += len(selected)
-            items = [await _match_context(match, db) for match in selected]
-            generated = await _web_oracle_batch(items)
+            result = await generate_or_refresh_matches(db, selected, force=False, refresh_news=True)
+            for key in totals:
+                totals[key] += int(result.get(key) or 0)
 
-            for ctx in items:
-                match_id = ctx["match"].id
-                data = generated.get(match_id)
-                if not data:
-                    continue
-                data["details_errors"] = ctx["errors"]
-                await _save_cache(db, match_id, data)
-                total_generated += 1
-
-            await db.commit()
-
-            # Do not spin repeatedly if OpenAI returned nothing for this batch.
-            if not generated:
+            # If everything in this pass failed before getting a stable cache,
+            # do not spin through the same batch repeatedly in one scheduler tick.
+            if result.get("ai_requested") and not result.get("generated") and not result.get("unchanged"):
                 break
 
-    return {"requested": total_requested, "generated": total_generated}
+    return totals
 
 
 async def oracle_scheduler_loop() -> None:
@@ -76,7 +65,7 @@ async def oracle_scheduler_loop() -> None:
     while True:
         try:
             result = await generate_due_oracle_predictions()
-            if result.get("generated"):
+            if result.get("requested"):
                 logger.info("Oracle scheduler: %s", result)
         except asyncio.CancelledError:
             raise
