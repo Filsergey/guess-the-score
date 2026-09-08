@@ -48,6 +48,21 @@ try:
 except Exception:
     pass
 
+# Add a separate trace overlay so admins can see WHY an OpenAI call happened,
+# including cache hits that cost $0, without changing the existing cost dashboard.
+trace_script_marker = "gts-admin-openai-trace-v1"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if trace_script_marker not in html:
+        script = (
+            f'<script id="{trace_script_marker}" '
+            'src="/static/admin-openai-trace.js?v=1" '
+            'data-gts-admin-openai-trace="1"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
 # Register admin usage endpoints, richer prediction signals and real OpenAI
 # token/cost accounting before event-driven Oracle initialization starts.
 from app.openai_usage import admin_router as _openai_admin_router
@@ -55,10 +70,14 @@ from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
 from app.oracle_enrichment import install_oracle_enrichment
 from app.oracle_openai_structured import install_structured_oracle_openai
+from app.oracle_usage_trace import activity_router as _oracle_activity_router
+from app.oracle_usage_trace import install_oracle_usage_trace
 from app.services.oracle_events import install_oracle_event_hooks
 
 _oracle_router.include_router(_openai_admin_router)
+_oracle_router.include_router(_oracle_activity_router)
 install_openai_usage_tracking()
 install_oracle_enrichment()
 install_structured_oracle_openai()
+install_oracle_usage_trace()
 install_oracle_event_hooks()
