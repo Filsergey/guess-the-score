@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import app.oracle as oracle
 
-EXPLANATION_VERSION = 2
+EXPLANATION_VERSION = 3
 _INSTALLED = False
 
 
@@ -21,7 +21,7 @@ def install_oracle_explanations() -> None:
 
     Existing predictions are upgraded only when they are opened (or otherwise
     explicitly refreshed). This avoids re-analyzing the whole cache merely
-    because the user-facing explanation format gained more informative factors.
+    because the user-facing explanation format gained a clearer presentation.
     """
     global _INSTALLED
     if _INSTALLED:
@@ -76,7 +76,7 @@ def install_oracle_explanations() -> None:
         if missing_scenarios:
             output_request["match_scenarios"] = True
         if old_explanation:
-            output_request["key_factors_v2"] = True
+            output_request["key_factors_human"] = True
         result["output_request"] = output_request
 
         if result.get("status") == "cache-unchanged":
