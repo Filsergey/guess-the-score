@@ -30,11 +30,8 @@ try:
 </style>'''
         index_path.write_text(html.replace("</head>", css + "</head>"), encoding="utf-8")
 except Exception:
-    # Navigation remains usable even if the visual hotfix cannot be injected.
     pass
 
-# Load the admin-only OpenAI usage dashboard from the no-cache root document so
-# PWA/browser caches cannot keep an older menu without the new tab.
 usage_script_marker = "gts-admin-openai-usage-v1"
 try:
     html = index_path.read_text(encoding="utf-8")
@@ -48,8 +45,6 @@ try:
 except Exception:
     pass
 
-# renderUsage() marks menuView as the usage page. Settings later reuses the same
-# root, so clear that stale state and restore the admin tabs after navigation.
 usage_nav_fix_marker = "gts-admin-openai-nav-fix-v1"
 try:
     html = index_path.read_text(encoding="utf-8")
@@ -62,8 +57,6 @@ try:
 except Exception:
     pass
 
-# Add a separate trace overlay so admins can see WHY an OpenAI call happened,
-# including cache hits that cost $0, without changing the existing cost dashboard.
 trace_script_marker = "gts-admin-openai-trace-v1"
 try:
     html = index_path.read_text(encoding="utf-8")
@@ -77,13 +70,27 @@ try:
 except Exception:
     pass
 
-# Register admin usage endpoints, richer prediction signals and real OpenAI
-# token/cost accounting before event-driven Oracle initialization starts.
+# Rich Oracle presentation is injected from the no-cache root. It installs after
+# DOMContentLoaded so it safely overrides the older bundled openOracle renderer.
+explanation_view_marker = "gts-oracle-analysis-view-v2"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if explanation_view_marker not in html:
+        script = (
+            f'<script id="{explanation_view_marker}" '
+            'src="/static/oracle-analysis-view-v2.js?v=1" '
+            'data-gts-oracle-analysis-view="2"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
 from app.openai_usage import admin_router as _openai_admin_router
 from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
 from app.oracle_bookmaker_panel import install_bookmaker_panel
 from app.oracle_enrichment import install_oracle_enrichment
+from app.oracle_explanations import install_oracle_explanations
 from app.oracle_openai_structured import install_structured_oracle_openai
 from app.oracle_usage_trace import activity_router as _oracle_activity_router
 from app.oracle_usage_trace import install_oracle_usage_trace
@@ -95,5 +102,6 @@ install_openai_usage_tracking()
 install_oracle_enrichment()
 install_bookmaker_panel()
 install_structured_oracle_openai()
+install_oracle_explanations()
 install_oracle_usage_trace()
 install_oracle_event_hooks()
