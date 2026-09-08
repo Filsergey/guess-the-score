@@ -78,7 +78,7 @@ try:
     if explanation_view_marker not in html:
         script = (
             f'<script id="{explanation_view_marker}" '
-            'src="/static/oracle-analysis-view-v2.js?v=2" '
+            'src="/static/oracle-analysis-view-v2.js?v=3" '
             'data-gts-oracle-analysis-view="3"></script>'
         )
         index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
