@@ -48,11 +48,12 @@ try:
 except Exception:
     pass
 
-# Register admin usage endpoints on the already-included Oracle router and wrap
-# OpenAI Responses calls before the application starts serving requests.
+# Register admin usage endpoints and real OpenAI token/cost accounting.
 from app.openai_usage import admin_router as _openai_admin_router
 from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
+from app.services.oracle_events import install_oracle_event_hooks
 
 _oracle_router.include_router(_openai_admin_router)
 install_openai_usage_tracking()
+install_oracle_event_hooks()
