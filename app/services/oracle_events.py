@@ -108,11 +108,21 @@ async def initialize_missing_oracle_predictions(
                 batch = missing[start : start + BATCH_SIZE]
                 try:
                     result = await generate_or_refresh_matches(db, batch, force=False)
-                    totals["generated"] += int(result.get("generated") or 0)
-                    totals["failed"] += int(result.get("failed") or 0)
+                    generated = int(result.get("generated") or 0)
+                    failed = int(result.get("failed") or 0)
+                    totals["generated"] += generated
+                    totals["failed"] += failed
+                    # A provider/quota failure normally affects the whole batch.
+                    # Stop immediately instead of spending/retrying every remaining
+                    # match in the same event. A later user action or new event can retry.
+                    if failed and not generated:
+                        totals["stopped_after_failure"] = True
+                        break
                 except Exception:
                     totals["failed"] += len(batch)
+                    totals["stopped_after_failure"] = True
                     logger.exception("Event-driven Oracle initialization failed")
+                    break
             if totals["missing"]:
                 logger.info("Event-driven Oracle initialization: %s", totals)
             return totals
@@ -135,11 +145,13 @@ async def initialize_all_active_oracle_leagues() -> None:
                 )
             ).all()
         for provider, season, tournament_id in rows:
-            await initialize_missing_oracle_predictions(
+            result = await initialize_missing_oracle_predictions(
                 provider=str(provider),
                 season=int(season),
                 tournament_id=int(tournament_id) if tournament_id is not None else None,
             )
+            if result.get("stopped_after_failure"):
+                break
     except asyncio.CancelledError:
         raise
     except Exception:
