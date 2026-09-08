@@ -1,14 +1,18 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.match_status import FINAL_MATCH_STATUSES, LIVE_MATCH_STATUSES
 from app.models import Match, Tournament, UserLeague
+from app.nav_icon_assets import ensure_nav_icons
 from app.providers.sstats import SStatsProvider
 from app.services.push_notifications import process_push_notifications
 from app.services.sstats_sync import _normalize_status, _pick
 from app.services.test_seed import ensure_test_reaction_participant
+
+ensure_nav_icons(Path(__file__).resolve().parents[1] / "static")
 
 
 def _rows(payload:dict)->list[dict]:
