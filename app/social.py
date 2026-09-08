@@ -132,7 +132,7 @@ async def _notify_social(
 ) -> None:
     label = await _match_label(match, db)
     score = f"{prediction.home_score}:{prediction.away_score}"
-    body = f"{actor.display_name} {action_text} · твой прогноз {score}, {label}."
+    body = f"Твой прогноз {score} · {label}.\n{actor.display_name} {action_text}."
     await deliver_to_user(
         db,
         target,
@@ -238,7 +238,7 @@ async def toggle_match_reaction(
         db, target, user, match, prediction,
         f"social:reaction:{item.id}",
         "Реакция на прогноз",
-        f"поставил {emoji} на твой прогноз",
+        f"поставил {emoji}",
     )
     return {"ok": True, "active": True, "kind": kind}
 
