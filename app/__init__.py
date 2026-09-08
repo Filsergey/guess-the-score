@@ -114,6 +114,19 @@ try:
 except Exception:
     pass
 
+tournament_standings_refresh_marker = "gts-tournament-standings-live-refresh-v1"
+try:
+    html = index_path.read_text(encoding="utf-8")
+    if tournament_standings_refresh_marker not in html:
+        script = (
+            f'<script id="{tournament_standings_refresh_marker}" '
+            'src="/static/tournament-standings-live-refresh.js?v=1" '
+            'data-gts-tournament-standings-live-refresh="1"></script>'
+        )
+        index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
+except Exception:
+    pass
+
 from app.openai_usage import admin_router as _openai_admin_router
 from app.openai_usage import install_openai_usage_tracking
 from app.oracle import router as _oracle_router
