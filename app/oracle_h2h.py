@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import datetime, timezone
 
 import app.oracle as oracle
+from app.providers.sstats import SStatsProvider
 
 _MAX_MATCHES = 5
 _MAX_INFLUENCE_PCT = 10.0
+_PROVIDER_CACHE_TTL_SECONDS = 6 * 60 * 60
+_PROVIDER_CACHE: dict[tuple[int, int], tuple[float, list[dict]]] = {}
+_PROVIDER_CACHE_LOCK = asyncio.Lock()
 _ORIGINAL_MATCH_CONTEXT = None
 _ORIGINAL_COMPOSE_PAYLOAD = None
 _INSTALLED = False
@@ -29,6 +35,227 @@ def _parse_date(value) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _value(row: dict, *names):
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _int_value(value) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rows(payload) -> list[dict]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data") or payload.get("response") or []
+    if isinstance(data, dict):
+        return [data]
+    return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
+
+
+def _normalize_provider_h2h(
+    payload,
+    home_provider_id: int,
+    away_provider_id: int,
+    home_name: str,
+    away_name: str,
+    before: datetime,
+) -> list[dict]:
+    provider = SStatsProvider()
+    before_utc = before if before.tzinfo else before.replace(tzinfo=timezone.utc)
+    before_utc = before_utc.astimezone(timezone.utc)
+    result = []
+
+    for raw in _rows(payload):
+        row = provider._normalize_game(raw)
+        home_id = _int_value(_value(row, "homeTeamId", "HomeTeamId"))
+        away_id = _int_value(_value(row, "awayTeamId", "AwayTeamId"))
+        if {home_id, away_id} != {int(home_provider_id), int(away_provider_id)}:
+            continue
+
+        played_at = _parse_date(_value(row, "date", "Date", "kickoffAt", "KickoffAt"))
+        if played_at is None or played_at >= before_utc:
+            continue
+
+        home_score = _int_value(
+            _value(
+                row,
+                "scoreHomeFT",
+                "ScoreHomeFT",
+                "scoreHome",
+                "ScoreHome",
+                "homeFTResult",
+                "HomeFTResult",
+                "homeResult",
+                "HomeResult",
+            )
+        )
+        away_score = _int_value(
+            _value(
+                row,
+                "scoreAwayFT",
+                "ScoreAwayFT",
+                "scoreAway",
+                "ScoreAway",
+                "awayFTResult",
+                "AwayFTResult",
+                "awayResult",
+                "AwayResult",
+            )
+        )
+        if home_score is None or away_score is None:
+            continue
+
+        if home_id == int(home_provider_id):
+            row_home_name, row_away_name = home_name, away_name
+        else:
+            row_home_name, row_away_name = away_name, home_name
+
+        result.append(
+            {
+                "date": played_at.date().isoformat(),
+                "home": row_home_name,
+                "away": row_away_name,
+                "score": f"{home_score}:{away_score}",
+                "competition": str(
+                    _value(row, "leagueName", "LeagueName", "competitionName", "CompetitionName") or ""
+                ),
+                "_sort": played_at.timestamp(),
+            }
+        )
+
+    result.sort(key=lambda item: item["_sort"], reverse=True)
+    for item in result:
+        item.pop("_sort", None)
+    return result[:_MAX_MATCHES]
+
+
+async def _query_provider_h2h(
+    home_provider_id: int,
+    away_provider_id: int,
+    home_name: str,
+    away_name: str,
+    before: datetime,
+) -> list[dict]:
+    provider = SStatsProvider()
+    fields = [
+        "Id",
+        "Date",
+        "Status",
+        "LeagueId",
+        "LeagueName",
+        "HomeTeamId",
+        "HomeTeamName",
+        "AwayTeamId",
+        "AwayTeamName",
+        "ScoreHome",
+        "ScoreAway",
+        "ScoreHomeFT",
+        "ScoreAwayFT",
+    ]
+    body = {
+        "Condition": (
+            f"(HomeTeamId = {int(home_provider_id)} AND AwayTeamId = {int(away_provider_id)}) "
+            f"OR (HomeTeamId = {int(away_provider_id)} AND AwayTeamId = {int(home_provider_id)})"
+        ),
+        "Fields": fields,
+        "Format": "json",
+        "Timezone": 0,
+        "Order": "Date DESC",
+        "Limit": 20,
+    }
+    try:
+        payload = await provider._post("Games/query", body, timeout=3.2)
+        rows = _normalize_provider_h2h(
+            payload, home_provider_id, away_provider_id, home_name, away_name, before
+        )
+        if rows:
+            return rows
+    except Exception:
+        pass
+
+    # Fallback to two exact conditions if the provider's query parser does not
+    # accept grouped OR expressions.
+    async def one(host_id: int, guest_id: int):
+        try:
+            return await provider._post(
+                "Games/query",
+                {
+                    "Condition": f"HomeTeamId = {int(host_id)} AND AwayTeamId = {int(guest_id)}",
+                    "Fields": fields,
+                    "Format": "json",
+                    "Timezone": 0,
+                    "Order": "Date DESC",
+                    "Limit": 10,
+                },
+                timeout=3.2,
+            )
+        except Exception:
+            return {"data": []}
+
+    first, second = await asyncio.gather(
+        one(home_provider_id, away_provider_id),
+        one(away_provider_id, home_provider_id),
+    )
+    merged_payload = {"data": _rows(first) + _rows(second)}
+    return _normalize_provider_h2h(
+        merged_payload, home_provider_id, away_provider_id, home_name, away_name, before
+    )
+
+
+async def _cached_provider_h2h(
+    home_provider_id: int,
+    away_provider_id: int,
+    home_name: str,
+    away_name: str,
+    before: datetime,
+) -> list[dict]:
+    key = tuple(sorted((int(home_provider_id), int(away_provider_id))))
+    now = time.monotonic()
+    async with _PROVIDER_CACHE_LOCK:
+        cached = _PROVIDER_CACHE.get(key)
+        if cached and cached[0] > now:
+            return [dict(row) for row in cached[1]]
+
+    rows = await _query_provider_h2h(
+        home_provider_id, away_provider_id, home_name, away_name, before
+    )
+    async with _PROVIDER_CACHE_LOCK:
+        _PROVIDER_CACHE[key] = (
+            now + _PROVIDER_CACHE_TTL_SECONDS,
+            [dict(row) for row in rows],
+        )
+    return rows
+
+
+def _merge_rows(local_rows: list[dict], provider_rows: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for row in list(provider_rows) + list(local_rows):
+        key = (
+            str(row.get("date") or ""),
+            str(row.get("home") or "").casefold(),
+            str(row.get("away") or "").casefold(),
+            str(row.get("score") or ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(dict(row))
+
+    merged.sort(
+        key=lambda row: _parse_date(row.get("date")) or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return merged[:_MAX_MATCHES]
 
 
 def _recency_weight(age_days: int) -> float:
@@ -102,9 +329,6 @@ def _h2h_metrics(rows: list[dict], home_name: str, away_name: str, before: datet
         elif row_home == wanted_away and row_away == wanted_home:
             own, opp = raw_away_goals, raw_home_goals
         else:
-            # Rows originate from the exact home/away team-id query in oracle.py.
-            # If names differ because of provider/localization aliases, infer the
-            # current home side from whichever participant matches it.
             if row_home == wanted_home:
                 own, opp = raw_home_goals, raw_away_goals
             elif row_away == wanted_home:
@@ -165,7 +389,7 @@ def _h2h_metrics(rows: list[dict], home_name: str, away_name: str, before: datet
 
 def _summary(metrics: dict) -> str:
     if not metrics or not metrics.get("count"):
-        return "В нашей базе нет завершённых очных встреч до этого матча."
+        return "Завершённые очные встречи до этого матча не найдены."
     return (
         f"Последние {metrics['count']} очных встреч: "
         f"{metrics['home_wins']} побед хозяев, {metrics['draws']} ничьих, "
@@ -177,9 +401,25 @@ def _summary(metrics: dict) -> str:
 
 async def _match_context_with_weighted_h2h(match, db):
     ctx = await _ORIGINAL_MATCH_CONTEXT(match, db)
-    rows = list(ctx.get("head_to_head_matches") or [])
+    local_rows = list(ctx.get("head_to_head_matches") or [])
     home = ctx.get("home")
     away = ctx.get("away")
+    rows = local_rows
+
+    if getattr(match, "provider", None) == "sstats" and len(local_rows) < _MAX_MATCHES:
+        home_provider_id = getattr(home, "provider_id", None)
+        away_provider_id = getattr(away, "provider_id", None)
+        if home_provider_id is not None and away_provider_id is not None:
+            provider_rows = await _cached_provider_h2h(
+                int(home_provider_id),
+                int(away_provider_id),
+                getattr(home, "name", "Хозяева"),
+                getattr(away, "name", "Гости"),
+                match.kickoff_at,
+            )
+            rows = _merge_rows(local_rows, provider_rows)
+
+    ctx["head_to_head_matches"] = rows
     metrics = _h2h_metrics(
         rows,
         getattr(home, "name", "Хозяева"),
@@ -188,7 +428,7 @@ async def _match_context_with_weighted_h2h(match, db):
     )
     ctx["head_to_head_metrics"] = metrics
 
-    # Keep full rows in ctx for the UI, but do not send them to OpenAI. The model
+    # Keep full H2H rows for the UI, but do not send them to OpenAI. The model
     # receives only compact server-computed metrics, which is cheaper and prevents
     # ancient H2H from being overinterpreted.
     snapshot = dict(ctx.get("snapshot") or {})
@@ -208,6 +448,7 @@ def _compose_payload_with_weighted_h2h(ctx, ai, mode):
     metrics = dict(ctx.get("head_to_head_metrics") or _empty_metrics())
     payload["head_to_head_metrics"] = metrics
     payload["head_to_head"] = _summary(metrics)
+    payload["head_to_head_matches"] = list(ctx.get("head_to_head_matches") or [])
     return payload
 
 
