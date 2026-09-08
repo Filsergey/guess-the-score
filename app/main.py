@@ -26,6 +26,7 @@ from app.migrations import migrate_provider_keys
 from app.models import Base, Match, Team
 from app.oracle import router as oracle_router
 from app.predictions import router as predictions_router
+from app.social import router as social_router
 from app.tournament_predictions import router as tournament_predictions_router
 from app.team_logos import router as team_logos_router
 from app.player_photos import router as player_photos_router
@@ -77,7 +78,7 @@ async def lifespan(_:FastAPI):
    with suppress(asyncio.CancelledError):await task
 
 app=FastAPI(title=settings.app_name,version='0.37.4',lifespan=lifespan)
-for r in (player_rankings_router,tournament_standings_router,auth_router,predictions_router,leagues_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
+for r in (player_rankings_router,tournament_standings_router,auth_router,predictions_router,leagues_router,social_router,league_catalog_router,live_standings_router,oracle_router,tournament_predictions_router,team_logos_router,player_photos_router,players_router):app.include_router(r)
 app.mount('/static',StaticFiles(directory=STATIC_DIR),name='static')
 
 @app.get('/',include_in_schema=False,response_class=HTMLResponse)
@@ -93,7 +94,8 @@ async def mini_app():
   '<script src="/static/app-shell.js?v=32"></script>'
   '<script src="/static/achievement-notify.js?v=11" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
-  '<script src="/static/prediction-history.js?v=2"></script>'
+  '<script src="/static/prediction-history.js?v=3"></script>'
+  '<script src="/static/social-features.js?v=1"></script>'
   '<script src="/static/leaderboard-me.js?v=2"></script>'
   '<script src="/static/live-standings.js?v=1"></script>'
   '<script src="/static/tournament-prediction.js?v=10"></script>'
