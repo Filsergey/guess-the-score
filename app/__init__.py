@@ -136,6 +136,7 @@ from app.oracle_explanations import install_oracle_explanations
 from app.oracle_h2h import install_oracle_h2h
 from app.oracle_h2h_flashscore import install_oracle_h2h_flashscore
 from app.oracle_h2h_flashscore_parser import install_flashscore_h2h_parser_patch
+from app.oracle_h2h_verified import install_oracle_h2h_verified
 from app.oracle_openai_structured import install_structured_oracle_openai
 from app.oracle_recent_matches import install_oracle_recent_matches
 from app.oracle_usage_trace import activity_router as _oracle_activity_router
@@ -159,6 +160,9 @@ install_oracle_h2h_flashscore()
 # LS responses can wrap H2H events several levels deep; flatten only match-like
 # objects and avoid the unreliable current-game FlashId heuristic.
 install_flashscore_h2h_parser_patch()
+# When upstream providers genuinely have no historical H2H, use a deliberately
+# small registry of separately verified authoritative competition records.
+install_oracle_h2h_verified()
 install_structured_oracle_openai()
 install_oracle_explanations()
 install_oracle_usage_trace()
