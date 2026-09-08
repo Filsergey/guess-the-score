@@ -9,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _P256_ORDER = int("FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551", 16)
 
 
+def _b64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode("ascii")
+
+
 def _derived_vapid_pair(secret: str) -> tuple[str, str]:
     digest = hashlib.sha256(("gts-webpush-v1:" + secret).encode("utf-8")).digest()
     scalar = (int.from_bytes(digest, "big") % (_P256_ORDER - 1)) + 1
@@ -17,13 +21,12 @@ def _derived_vapid_pair(secret: str) -> tuple[str, str]:
         encoding=serialization.Encoding.X962,
         format=serialization.PublicFormat.UncompressedPoint,
     )
-    public_key = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode("ascii")
-    private_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
+    private_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
-    ).decode("ascii")
-    return public_key, private_pem
+    )
+    return _b64url(public_bytes), _b64url(private_der)
 
 
 class Settings(BaseSettings):
