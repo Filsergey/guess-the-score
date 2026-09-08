@@ -7,6 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.competitions.champions_league import classify_ucl_round
 from app.database import get_db
 from app.leagues import _membership
 from app.localization import round_name_ru, team_name_ru
@@ -35,12 +36,11 @@ async def standings_payload(tournament_id, season):
         return data
 
 
-async def _local_finished_stats(db: AsyncSession, tournament_db_id: int, season: int):
-    """Build official-result standings from our already synced finished fixtures.
+async def _local_finished_stats(db: AsyncSession, tournament_db_id: int, season: int, is_ucl: bool = False):
+    """Build standings from already synced finished fixtures.
 
-    SStats' Seasons/standings can lag behind the Games endpoints after a match ends.
-    Our live sync updates Match rows much faster, so use those results whenever they
-    contain more completed games than the provider standings snapshot.
+    For the Champions League table only league-phase fixtures count. Qualifying
+    rounds and all knockout rounds must never affect the 36-team league table.
     """
     matches = (await db.scalars(
         select(Match).where(
@@ -52,6 +52,13 @@ async def _local_finished_stats(db: AsyncSession, tournament_db_id: int, season:
             Match.away_goals.is_not(None),
         )
     )).all()
+
+    if is_ucl:
+        matches = [
+            match for match in matches
+            if (classify_ucl_round(match.season, match.kickoff_at) or {}).get("stage") == "league_phase"
+        ]
+
     if not matches:
         return {}, 0
 
@@ -207,8 +214,11 @@ async def tournament_standings(league_id: int, user: User = Depends(get_current_
         raise HTTPException(503, "Не удалось загрузить таблицу турнира. Попробуй ещё раз.") from exc
     ids = {r["teamId"] for t in data["tables"] for r in (t.get("rows") or [])}
     teams = (await db.scalars(select(Team).where(Team.provider == "sstats", Team.provider_id.in_(ids)))).all() if ids else []
-    local_stats, finished_count = await _local_finished_stats(db, tournament.id, league.tournament_season)
-    groups = normalize_tables(data, {t.provider_id: t for t in teams}, tournament.provider_id == 2, local_stats)
+    is_ucl = tournament.provider_id == 2
+    local_stats, finished_count = await _local_finished_stats(
+        db, tournament.id, league.tournament_season, is_ucl=is_ucl
+    )
+    groups = normalize_tables(data, {t.provider_id: t for t in teams}, is_ucl, local_stats)
     locally_calculated = any(g.get("calculated_locally") for g in groups)
     return {"name": tournament.name, "season": league.tournament_season,
             "groups": groups, "source": "local-finished" if locally_calculated else "sstats",
