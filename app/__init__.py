@@ -135,6 +135,7 @@ from app.oracle_enrichment import install_oracle_enrichment
 from app.oracle_explanations import install_oracle_explanations
 from app.oracle_h2h import install_oracle_h2h
 from app.oracle_h2h_flashscore import install_oracle_h2h_flashscore
+from app.oracle_h2h_flashscore_parser import install_flashscore_h2h_parser_patch
 from app.oracle_openai_structured import install_structured_oracle_openai
 from app.oracle_recent_matches import install_oracle_recent_matches
 from app.oracle_usage_trace import activity_router as _oracle_activity_router
@@ -155,6 +156,9 @@ install_oracle_h2h()
 # The main SStats game table can omit old meetings; use the documented Flashscore
 # BothTeams endpoint only when the weighted H2H layer still has fewer than 5 rows.
 install_oracle_h2h_flashscore()
+# LS responses can wrap H2H events several levels deep; flatten only match-like
+# objects and avoid the unreliable current-game FlashId heuristic.
+install_flashscore_h2h_parser_patch()
 install_structured_oracle_openai()
 install_oracle_explanations()
 install_oracle_usage_trace()
