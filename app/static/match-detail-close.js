@@ -1,5 +1,5 @@
 (()=>{
-  const STYLE_ID='gts-sheet-close-style-v4';
+  const STYLE_ID='gts-sheet-close-style-v5';
   const ANCHOR_CLASS='gts-sheet-close-anchor';
   const BUTTON_CLASS='gts-sheet-close-float';
   const SPACE_CLASS='gts-sheet-close-space';
@@ -81,6 +81,9 @@
   }
 
   function closeCurrentSheet(){
+    try{
+      if(typeof window.gtsTrySheetBack==='function'&&window.gtsTrySheetBack())return;
+    }catch{}
     const content=document.getElementById('sheetContent');
     const nativeClose=findNativeClose(content);
     if(nativeClose){nativeClose.click();return}
