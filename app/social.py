@@ -9,7 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.auth import get_current_user
 from app.database import get_db
 from app.leagues import _membership
-from app.models import Base, LeagueMember, User, UserLeague
+from app.models import Base, LeagueMember, Match, User, UserLeague
 
 router = APIRouter(prefix="/api/leagues", tags=["league-social"])
 
@@ -24,6 +24,24 @@ class LeagueReaction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
+    from_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    target_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(24), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
+
+
+class MatchReaction(Base):
+    __tablename__ = "match_reactions"
+    __table_args__ = (
+        UniqueConstraint(
+            "league_id", "match_id", "from_user_id", "target_user_id", "kind",
+            name="uq_match_reaction_once",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    league_id: Mapped[int] = mapped_column(ForeignKey("user_leagues.id", ondelete="CASCADE"), index=True)
+    match_id: Mapped[int] = mapped_column(ForeignKey("matches.id", ondelete="CASCADE"), index=True)
     from_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     target_user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(24), index=True)
@@ -45,6 +63,89 @@ async def _target_member(league_id: int, target_user_id: int, db: AsyncSession) 
     if row is None:
         raise HTTPException(404, "Участник не найден в этой лиге")
     return row
+
+
+async def _started_match(league_id: int, match_id: int, db: AsyncSession) -> tuple[UserLeague, Match]:
+    league = await db.get(UserLeague, league_id)
+    match = await db.get(Match, match_id)
+    if league is None:
+        raise HTTPException(404, "Лига не найдена")
+    if match is None:
+        raise HTTPException(404, "Матч не найден")
+    belongs = match.provider == league.tournament_provider and match.season == league.tournament_season
+    if league.tournament_id is not None:
+        belongs = belongs and match.tournament_id == league.tournament_id
+    if not belongs:
+        raise HTTPException(409, "Матч не относится к турниру этой лиги")
+    kickoff = match.kickoff_at
+    if kickoff.tzinfo is None:
+        kickoff = kickoff.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) < kickoff:
+        raise HTTPException(409, "Реакции откроются после начала матча")
+    return league, match
+
+
+@router.get("/{league_id}/matches/{match_id}/reactions")
+async def match_reactions(
+    league_id: int,
+    match_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _membership(league_id, user, db)
+    await _started_match(league_id, match_id, db)
+    rows = (await db.scalars(select(MatchReaction).where(
+        MatchReaction.league_id == league_id,
+        MatchReaction.match_id == match_id,
+    ).order_by(MatchReaction.created_at.desc()))).all()
+    targets: dict[str, dict] = {}
+    for item in rows:
+        target = targets.setdefault(str(item.target_user_id), {"counts": {}, "mine": []})
+        target["counts"][item.kind] = int(target["counts"].get(item.kind, 0)) + 1
+        if item.from_user_id == user.id:
+            target["mine"].append(item.kind)
+    for target in targets.values():
+        target["mine"].sort()
+    return {"league_id": league_id, "match_id": match_id, "targets": targets}
+
+
+@router.post("/{league_id}/matches/{match_id}/reactions")
+async def toggle_match_reaction(
+    league_id: int,
+    match_id: int,
+    body: ReactionBody,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _membership(league_id, user, db)
+    await _started_match(league_id, match_id, db)
+    kind = body.kind.strip().lower()
+    if kind not in REACTION_KINDS:
+        raise HTTPException(422, "Неизвестная реакция")
+    if body.target_user_id == user.id:
+        raise HTTPException(422, "Себя подколоть можно и без приложения")
+    await _target_member(league_id, body.target_user_id, db)
+    existing = await db.scalar(select(MatchReaction).where(
+        MatchReaction.league_id == league_id,
+        MatchReaction.match_id == match_id,
+        MatchReaction.from_user_id == user.id,
+        MatchReaction.target_user_id == body.target_user_id,
+        MatchReaction.kind == kind,
+    ))
+    if existing is not None:
+        await db.delete(existing)
+        await db.commit()
+        return {"ok": True, "active": False, "kind": kind}
+    db.add(MatchReaction(
+        league_id=league_id,
+        match_id=match_id,
+        from_user_id=user.id,
+        target_user_id=body.target_user_id,
+        kind=kind,
+        created_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    return {"ok": True, "active": True, "kind": kind}
 
 
 @router.get("/{league_id}/reactions")
