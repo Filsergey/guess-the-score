@@ -95,7 +95,7 @@ async def mini_app():
   '<script src="/static/achievement-notify.js?v=11" data-gts-achievement-notify="1"></script>'
   '<script src="/static/oracle-leaderboard.js?v=1"></script>'
   '<script src="/static/prediction-history.js?v=3"></script>'
-  '<script src="/static/social-features.js?v=1"></script>'
+  '<script src="/static/social-features.js?v=2"></script>'
   '<script src="/static/leaderboard-me.js?v=2"></script>'
   '<script src="/static/live-standings.js?v=1"></script>'
   '<script src="/static/tournament-prediction.js?v=10"></script>'
