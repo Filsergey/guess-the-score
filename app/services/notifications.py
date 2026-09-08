@@ -18,12 +18,12 @@ from app.push_models import PushSubscription
 
 settings=get_settings()
 DEFAULT_NOTIFICATION_PREFERENCES={
-    'prediction_reminders':False,
-    'participant_activity':False,
-    'match_start':False,
-    'match_results':False,
-    'daily_digest':False,
-    'match_videos':False,
+    'prediction_reminders':True,
+    'participant_activity':True,
+    'match_start':True,
+    'match_results':True,
+    'daily_digest':True,
+    'match_videos':True,
 }
 DEFAULT_NOTIFICATION_CHANNELS={'pwa':True,'telegram':True}
 SERVICE_STARTED_AT=datetime.now(timezone.utc)
@@ -257,10 +257,3 @@ async def run_notification_cycle()->None:
         await _process_reminders(db,now);await _process_starts(db,now);await _process_results(db,now)
         users=(await db.execute(select(User))).scalars().all()
         for user in users:await _daily_for_user(db,user,now)
-
-async def notification_scheduler_loop()->None:
-    await asyncio.sleep(20)
-    while True:
-        try:await run_notification_cycle()
-        except Exception:pass
-        await asyncio.sleep(60)
