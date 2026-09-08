@@ -141,6 +141,20 @@ window.gtsSheetCanBack=()=>history.length>0;
 window.gtsSheetDepth=()=>history.length;
 window.gtsResetSheetHistory=clearHistory;
 
+// Existing feature screens already contain buttons such as “← Назад к профилю”.
+// When universal history is available, consume those controls here so they pop the
+// same stack as the floating X instead of rebuilding an older screen independently.
+document.addEventListener('click',e=>{
+  if(!history.length||!modal.classList.contains('open')||!box.contains(e.target))return;
+  const control=e.target?.closest?.('button,a,[role="button"]');
+  if(!control)return;
+  const text=(control.textContent||'').trim();
+  const explicit=control.matches?.('[data-gts-sheet-back],.social-back');
+  if(!explicit&&!/^←\s*Назад/i.test(text))return;
+  e.preventDefault();e.stopPropagation();e.stopImmediatePropagation?.();
+  armSwallow(180);restorePreviousSheet();
+},true);
+
 // Any click inside an already open sheet can start a nested view. We only consume
 // the intent when the top-level sheetContent is actually replaced, so ordinary
 // accordions, filters and controls that update their own child nodes do not create
