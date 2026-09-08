@@ -72,14 +72,14 @@ except Exception:
 
 # Rich Oracle presentation is injected from the no-cache root. It installs after
 # DOMContentLoaded so it safely overrides the older bundled openOracle renderer.
-explanation_view_marker = "gts-oracle-analysis-view-v2"
+explanation_view_marker = "gts-oracle-analysis-view-v3"
 try:
     html = index_path.read_text(encoding="utf-8")
     if explanation_view_marker not in html:
         script = (
             f'<script id="{explanation_view_marker}" '
-            'src="/static/oracle-analysis-view-v2.js?v=1" '
-            'data-gts-oracle-analysis-view="2"></script>'
+            'src="/static/oracle-analysis-view-v2.js?v=2" '
+            'data-gts-oracle-analysis-view="3"></script>'
         )
         index_path.write_text(html.replace("</body>", script + "</body>"), encoding="utf-8")
 except Exception:
