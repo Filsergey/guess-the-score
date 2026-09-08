@@ -73,22 +73,28 @@
   font-weight: 800;
 }
 
-/* Neon bottom navigation icons. The files are generated as static WebP assets at app start. */
+/* Compact neon bottom navigation. */
+.nav {
+  padding: 5px 4px calc(5px + env(safe-area-inset-bottom));
+}
+
 .nav button {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
+  padding: 3px 2px;
+  line-height: 1.05;
 }
 
 .nav button::before {
   content: "";
   display: block;
-  width: 29px;
-  height: 29px;
-  flex: 0 0 29px;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
@@ -103,11 +109,11 @@
   transform: translateY(-1px) scale(1.04);
 }
 
-#navHome::before { background-image: url('/static/nav-icons/home.webp?v=1'); }
-#navMatches::before { background-image: url('/static/nav-icons/matches.webp?v=1'); }
-#navLeagues::before { background-image: url('/static/nav-icons/leagues.webp?v=1'); }
-#navTable::before { background-image: url('/static/nav-icons/table.webp?v=1'); }
-#navMenu::before { background-image: url('/static/nav-icons/settings.webp?v=1'); }
+#navHome::before { background-image: url('/static/nav-icons/home.webp?v=4'); }
+#navMatches::before { background-image: url('/static/nav-icons/matches.webp?v=4'); }
+#navLeagues::before { background-image: url('/static/nav-icons/leagues.webp?v=4'); }
+#navTable::before { background-image: url('/static/nav-icons/table.webp?v=4'); }
+#navMenu::before { background-image: url('/static/nav-icons/settings.webp?v=4'); }
 
 /* The underlying legacy button still says «Меню»; visually this tab is now «Настройки». */
 #navMenu { font-size: 0; }
