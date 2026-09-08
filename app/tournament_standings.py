@@ -10,7 +10,7 @@ from app.auth import get_current_user
 from app.database import get_db
 from app.leagues import _membership
 from app.localization import round_name_ru, team_name_ru
-from app.match_status import status_group, status_label_ru
+from app.match_status import FINAL_MATCH_STATUSES, status_group, status_label_ru
 from app.models import Match, Player, Team, Tournament, User, UserLeague
 from app.providers.sstats import SStatsProvider
 
@@ -35,8 +35,72 @@ async def standings_payload(tournament_id, season):
         return data
 
 
-def normalize_tables(data, team_map, is_ucl):
+async def _local_finished_stats(db: AsyncSession, tournament_db_id: int, season: int):
+    """Build official-result standings from our already synced finished fixtures.
+
+    SStats' Seasons/standings can lag behind the Games endpoints after a match ends.
+    Our live sync updates Match rows much faster, so use those results whenever they
+    contain more completed games than the provider standings snapshot.
+    """
+    matches = (await db.scalars(
+        select(Match).where(
+            Match.provider == "sstats",
+            Match.tournament_id == tournament_db_id,
+            Match.season == season,
+            Match.status_short.in_(tuple(FINAL_MATCH_STATUSES)),
+            Match.home_goals.is_not(None),
+            Match.away_goals.is_not(None),
+        )
+    )).all()
+    if not matches:
+        return {}, 0
+
+    team_ids = {m.home_team_id for m in matches} | {m.away_team_id for m in matches}
+    teams = (await db.scalars(select(Team).where(Team.id.in_(team_ids)))).all()
+    provider_id_by_db = {t.id: t.provider_id for t in teams if t.provider == "sstats"}
+    stats = {}
+
+    def row(provider_id):
+        return stats.setdefault(provider_id, {
+            "played": 0, "wins": 0, "draws": 0, "losses": 0,
+            "goals_for": 0, "goals_against": 0, "points": 0,
+        })
+
+    covered = 0
+    for match in matches:
+        home_id = provider_id_by_db.get(match.home_team_id)
+        away_id = provider_id_by_db.get(match.away_team_id)
+        if home_id is None or away_id is None:
+            continue
+        hg, ag = int(match.home_goals), int(match.away_goals)
+        home, away = row(home_id), row(away_id)
+        home["played"] += 1
+        away["played"] += 1
+        home["goals_for"] += hg
+        home["goals_against"] += ag
+        away["goals_for"] += ag
+        away["goals_against"] += hg
+        if hg > ag:
+            home["wins"] += 1
+            away["losses"] += 1
+            home["points"] += 3
+        elif hg < ag:
+            away["wins"] += 1
+            home["losses"] += 1
+            away["points"] += 3
+        else:
+            home["draws"] += 1
+            away["draws"] += 1
+            home["points"] += 1
+            away["points"] += 1
+        covered += 1
+
+    return stats, covered
+
+
+def normalize_tables(data, team_map, is_ucl, local_stats=None):
     groups = []
+    local_stats = local_stats or {}
     for table in data.get("tables", []):
         rows = table.get("rows") or []
         by_group = {}
@@ -44,27 +108,61 @@ def normalize_tables(data, team_map, is_ucl):
             by_group.setdefault(row.get("groupName") or "Турнирная таблица", []).append(row)
         for name, items in by_group.items():
             league_phase = is_ucl and str(name).casefold() == "league phase" and len(items) == 36
-            output = []
-            for row in sorted(items, key=lambda x: x["rank"]):
+            provider_played = sum(int(x.get("played") or 0) for x in items)
+            local_played = sum(int(local_stats.get(x.get("teamId"), {}).get("played") or 0) for x in items)
+            use_local = bool(local_stats) and local_played > provider_played
+
+            prepared = []
+            for row in items:
                 tid = row["teamId"]
+                local = local_stats.get(tid) if use_local else None
+                gf = local["goals_for"] if local else row.get("goalsFor")
+                ga = local["goals_against"] if local else row.get("goalsAgainst")
+                prepared.append({
+                    "raw": row,
+                    "team_id": tid,
+                    "played": local["played"] if local else row.get("played"),
+                    "wins": local["wins"] if local else row.get("wins"),
+                    "draws": local["draws"] if local else row.get("draws"),
+                    "losses": local["losses"] if local else row.get("loses"),
+                    "goals_for": gf,
+                    "goals_against": ga,
+                    "difference": (gf - ga) if gf is not None and ga is not None else None,
+                    "points": local["points"] if local else row.get("points"),
+                })
+
+            if use_local:
+                prepared.sort(key=lambda x: (
+                    -int(x["points"] or 0),
+                    -int(x["difference"] or 0),
+                    -int(x["goals_for"] or 0),
+                    -int(x["wins"] or 0),
+                    int(x["raw"].get("rank") or 999),
+                ))
+            else:
+                prepared.sort(key=lambda x: int(x["raw"].get("rank") or 999))
+
+            output = []
+            for index, item in enumerate(prepared, 1):
+                row = item["raw"]
+                tid = item["team_id"]
                 team = team_map.get(tid)
-                rank = row["rank"]
-                gf, ga = row.get("goalsFor"), row.get("goalsAgainst")
+                rank = index if use_local else row["rank"]
                 output.append({
                     "team_id": team.id if team else None,
                     "provider_team_id": tid,
                     "rank": rank,
                     "name": team_name_ru(team.name) if team else team_name_ru(row.get("teamName") or f"Клуб №{tid}"),
                     "logo": f"/api/team-logo/db/{team.id}" if team else None,
-                    "played": row.get("played"), "wins": row.get("wins"),
-                    "draws": row.get("draws"), "losses": row.get("loses"),
-                    "goals_for": gf, "goals_against": ga,
-                    "difference": gf - ga if gf is not None and ga is not None else None,
-                    "points": row.get("points"),
+                    "played": item["played"], "wins": item["wins"],
+                    "draws": item["draws"], "losses": item["losses"],
+                    "goals_for": item["goals_for"], "goals_against": item["goals_against"],
+                    "difference": item["difference"], "points": item["points"],
                     "zone": ("direct" if rank <= 8 else "playoff" if rank <= 24 else "out") if league_phase else None,
                 })
             groups.append({"name": "Общий этап" if league_phase else name,
-                           "ucl_zones": league_phase, "rows": output})
+                           "ucl_zones": league_phase, "rows": output,
+                           "calculated_locally": use_local})
     return groups
 
 
@@ -109,8 +207,12 @@ async def tournament_standings(league_id: int, user: User = Depends(get_current_
         raise HTTPException(503, "Не удалось загрузить таблицу турнира. Попробуй ещё раз.") from exc
     ids = {r["teamId"] for t in data["tables"] for r in (t.get("rows") or [])}
     teams = (await db.scalars(select(Team).where(Team.provider == "sstats", Team.provider_id.in_(ids)))).all() if ids else []
+    local_stats, finished_count = await _local_finished_stats(db, tournament.id, league.tournament_season)
+    groups = normalize_tables(data, {t.provider_id: t for t in teams}, tournament.provider_id == 2, local_stats)
+    locally_calculated = any(g.get("calculated_locally") for g in groups)
     return {"name": tournament.name, "season": league.tournament_season,
-            "groups": normalize_tables(data, {t.provider_id: t for t in teams}, tournament.provider_id == 2)}
+            "groups": groups, "source": "local-finished" if locally_calculated else "sstats",
+            "finished_matches": finished_count}
 
 
 @router.get("/{league_id}/teams/{team_id}/overview")
