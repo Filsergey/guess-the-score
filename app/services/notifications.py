@@ -5,14 +5,14 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from pywebpush import WebPushException, webpush
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import SessionLocal
 from app.match_status import is_final_status
 from app.models import LeagueMember, Match, Prediction, Team, Tournament, User, UserLeague
-from app.notification_models import NotificationDelivery
+from app.notification_models import LeagueTelegramChat, NotificationDelivery
 from app.profile_models import UserProfile
 from app.push_models import PushSubscription
 
@@ -157,6 +157,26 @@ async def _league_members_for_match(db:AsyncSession,match:Match)->list[tuple[Use
     if rows:return rows
     return (await db.execute(select(UserLeague,User).join(LeagueMember,LeagueMember.league_id==UserLeague.id).join(User,User.id==LeagueMember.user_id).where(UserLeague.tournament_provider==match.provider,UserLeague.tournament_season==match.season))).all()
 
+async def _shared_activity_rows(db:AsyncSession,actor_id:int,season:int,tournament_id:int|None=None,provider:str|None=None)->list[tuple[UserLeague,User]]:
+    """Return only users who currently share an eligible league with the actor."""
+    actor_leagues=select(LeagueMember.league_id).where(LeagueMember.user_id==actor_id)
+    stmt=(select(UserLeague,User)
+          .join(LeagueMember,LeagueMember.league_id==UserLeague.id)
+          .join(User,User.id==LeagueMember.user_id)
+          .where(UserLeague.id.in_(actor_leagues),UserLeague.tournament_season==season))
+    if provider is not None:
+        stmt=stmt.where(UserLeague.tournament_provider==provider)
+    if tournament_id is not None:
+        # Keep legacy leagues without an explicit tournament id working, but never
+        # include a league that points at a different tournament.
+        stmt=stmt.where(or_(UserLeague.tournament_id==tournament_id,UserLeague.tournament_id.is_(None)))
+    return (await db.execute(stmt)).all()
+
+async def _activity_chat_ids(db:AsyncSession,league_ids:set[int])->list[int]:
+    if not league_ids:return []
+    rows=(await db.scalars(select(LeagueTelegramChat).where(LeagueTelegramChat.league_id.in_(league_ids)))).all()
+    return list(dict.fromkeys(int(row.chat_id) for row in rows))
+
 async def _match_names(db:AsyncSession,match:Match)->tuple[str,str]:
     h=await db.get(Team,match.home_team_id);a=await db.get(Team,match.away_team_id)
     return (h.name if h else 'Хозяева',a.name if a else 'Гости')
@@ -165,29 +185,30 @@ async def notify_prediction_activity(actor_id:int,match_id:int)->None:
     async with SessionLocal() as db:
         actor=await db.get(User,actor_id);match=await db.get(Match,match_id)
         if not actor or not match or _is_qualifying_match(match):return
-        home,away=await _match_names(db,match);rows=await _league_members_for_match(db,match);seen=set();chats=set()
-        for league,user in rows:
-            if user.id!=actor.id and user.id not in seen:
-                seen.add(user.id)
-                await deliver_to_user(db,user,f'activity:match:{match.id}:actor:{actor.id}:u:{user.id}','participant_activity','Активность участников',f'{actor.display_name} сделал прогноз на {home} — {away}. Счёт откроется после старта.',f'/?match={match.id}')
-            chat_id=getattr(league,'telegram_chat_id',None)
-            if chat_id and chat_id not in chats:
-                chats.add(chat_id);await _send_telegram(chat_id,f'👥 {actor.display_name} сделал прогноз на {home} — {away}. Счёт откроется после стартового свистка.')
+        home,away=await _match_names(db,match)
+        rows=await _shared_activity_rows(db,actor.id,match.season,match.tournament_id,match.provider)
+        seen=set();league_ids={league.id for league,_ in rows}
+        for _,user in rows:
+            if user.id==actor.id or user.id in seen:continue
+            seen.add(user.id)
+            await deliver_to_user(db,user,f'activity:match:{match.id}:actor:{actor.id}:u:{user.id}','participant_activity','Активность участников',f'{actor.display_name} сделал прогноз на {home} — {away}. Счёт откроется после старта.',f'/?match={match.id}')
+        for chat_id in await _activity_chat_ids(db,league_ids):
+            await _send_telegram(chat_id,f'👥 {actor.display_name} сделал прогноз на {home} — {away}. Счёт откроется после стартового свистка.')
 
 async def notify_tournament_activity(actor_id:int,tournament_id:int|None,season:int)->None:
     async with SessionLocal() as db:
         actor=await db.get(User,actor_id)
         if not actor:return
         tournament=await db.get(Tournament,tournament_id) if tournament_id else None;name=tournament.name if tournament else 'турнир'
-        stmt=select(UserLeague,User).join(LeagueMember,LeagueMember.league_id==UserLeague.id).join(User,User.id==LeagueMember.user_id).where(UserLeague.tournament_season==season)
-        if tournament_id:stmt=stmt.where(UserLeague.tournament_id==tournament_id)
-        rows=(await db.execute(stmt)).all();seen=set();chats=set()
-        for league,user in rows:
-            if user.id!=actor.id and user.id not in seen:
-                seen.add(user.id);await deliver_to_user(db,user,f'activity:tournament:{tournament_id or 0}:{season}:actor:{actor.id}:u:{user.id}','participant_activity','Турнирный прогноз',f'{actor.display_name} заполнил прогноз на {name}.','/')
-            chat_id=getattr(league,'telegram_chat_id',None)
-            if chat_id and chat_id not in chats:
-                chats.add(chat_id);await _send_telegram(chat_id,f'🏆 {actor.display_name} заполнил турнирный прогноз на {name}.')
+        provider=tournament.provider if tournament else None
+        rows=await _shared_activity_rows(db,actor.id,season,tournament_id,provider)
+        seen=set();league_ids={league.id for league,_ in rows}
+        for _,user in rows:
+            if user.id==actor.id or user.id in seen:continue
+            seen.add(user.id)
+            await deliver_to_user(db,user,f'activity:tournament:{tournament_id or 0}:{season}:actor:{actor.id}:u:{user.id}','participant_activity','Турнирный прогноз',f'{actor.display_name} заполнил прогноз на {name}.','/')
+        for chat_id in await _activity_chat_ids(db,league_ids):
+            await _send_telegram(chat_id,f'🏆 {actor.display_name} заполнил турнирный прогноз на {name}.')
 
 async def _process_reminders(db:AsyncSession,now:datetime)->None:
     matches=(await db.execute(select(Match).where(Match.kickoff_at>=now+timedelta(minutes=50),Match.kickoff_at<=now+timedelta(minutes=70)))).scalars().all()
