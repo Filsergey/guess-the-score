@@ -143,6 +143,7 @@ from app.oracle_usage_trace import activity_router as _oracle_activity_router
 from app.oracle_usage_trace import install_oracle_usage_trace
 from app.services.oracle_events import install_oracle_event_hooks
 from app.tournament_prediction_policy import install_tournament_prediction_policy
+from app.notification_membership_scope import install_notification_membership_scope
 
 _oracle_router.include_router(_openai_admin_router)
 _oracle_router.include_router(_oracle_activity_router)
@@ -168,3 +169,4 @@ install_oracle_explanations()
 install_oracle_usage_trace()
 install_oracle_event_hooks()
 install_tournament_prediction_policy()
+install_notification_membership_scope()
